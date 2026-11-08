@@ -93,7 +93,8 @@ export const ARDUINO_SKETCHES: Record<
  * FAVORA — IoT Non-Contact Infrared Temperature Monitoring
  * Hardware: ESP32 + Sensor Inframerah GY-906 (MLX90614ESF)
  * Pinout: VIN->3V3, GND->GND, SCL->GPIO 22, SDA->GPIO 21
- * Library Arduino: "Adafruit MLX90614 Library" & "ArduinoJson"
+ * Fitur: Sinkronisasi Realtime Firestore & Remote Wi-Fi Sync dari Web
+ * Library: "Adafruit MLX90614 Library" & "ArduinoJson"
  */
 
 #include <Wire.h>
@@ -102,16 +103,24 @@ export const ARDUINO_SKETCHES: Record<
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
+#include <Preferences.h>
 #include <time.h>
 
 constexpr uint8_t PIN_SDA = 21;
 constexpr uint8_t PIN_SCL = 22;
 
 Adafruit_MLX90614 mlx = Adafruit_MLX90614();
+Preferences prefs;
 bool sensorOk = false;
 
+// Kredensial default awal (dapat diperbarui otomatis via Cloud Firestore)
 const char* ssid = "FanraRA";
 const char* password = "#I47r32a6";
+
+String currentWifiSSID = ssid;
+String currentWifiPass = password;
+int sendIntervalSec = 5;
+unsigned long lastConfigCheck = 0;
 
 const char* FIREBASE_API_KEY    = "AIzaSyBI-UaWx_Tgo15266t49zO8z8GkDSCaAvo";
 const char* FIREBASE_PROJECT_ID = "pvngblock";
@@ -135,6 +144,58 @@ bool readTempC(float &tempOut) {
   if (isnan(t) || t < -65.0 || t > 380.0) return false;
   tempOut = (float)t;
   return true;
+}
+
+void checkRemoteConfig() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  WiFiClientSecure client; client.setInsecure();
+  HTTPClient https;
+  String url = "https://firestore.googleapis.com/v1/projects/" + String(FIREBASE_PROJECT_ID) +
+               "/databases/(default)/documents/device_settings/esp32_config?key=" + String(FIREBASE_API_KEY);
+  if (!https.begin(client, url)) return;
+  int code = https.GET();
+  if (code == 200) {
+    DynamicJsonDocument doc(2048);
+    if (!deserializeJson(doc, https.getString()) && doc.containsKey("fields")) {
+      JsonObject fields = doc["fields"];
+      
+      // 1. Cek perubahan interval pengiriman
+      if (fields.containsKey("send_interval_sec")) {
+        long sec = fields["send_interval_sec"]["integerValue"] ? atol(fields["send_interval_sec"]["integerValue"]) : 5;
+        if (sec >= 1 && sec <= 60 && sec != sendIntervalSec) {
+          sendIntervalSec = (int)sec;
+          Serial.printf("[Cloud Sync] Interval pengiriman diubah ke %d detik\\n", sendIntervalSec);
+        }
+      }
+
+      // 2. Cek perubahan Wi-Fi Router dari Web Dashboard
+      if (fields.containsKey("wifi_ssid") && fields.containsKey("wifi_pass")) {
+        String remoteSsid = fields["wifi_ssid"]["stringValue"] | "";
+        String remotePass = fields["wifi_pass"]["stringValue"] | "";
+        String lastFrom = fields["last_synced_from"]["stringValue"] | "";
+
+        if (remoteSsid.length() > 0 && lastFrom == "web_portal" && (remoteSsid != currentWifiSSID || remotePass != currentWifiPass)) {
+          Serial.println("\\n=======================================================");
+          Serial.println("⚡ [SYNC CLOUD] Menerima Perubahan Wi-Fi Router dari Web!");
+          Serial.printf("  SSID Target Baru: %s\\n", remoteSsid.c_str());
+          Serial.println("  Menyimpan ke Flash NVS dan menghubungkan ulang...");
+          Serial.println("=======================================================\\n");
+
+          currentWifiSSID = remoteSsid;
+          currentWifiPass = remotePass;
+          prefs.begin("favora", false);
+          prefs.putString("wifi_ssid", remoteSsid);
+          prefs.putString("wifi_pass", remotePass);
+          prefs.end();
+
+          WiFi.disconnect();
+          delay(1000);
+          WiFi.begin(currentWifiSSID.c_str(), currentWifiPass.c_str());
+        }
+      }
+    }
+  }
+  https.end();
 }
 
 void sendFirestore(float suhu) {
@@ -176,8 +237,6 @@ void sendFirestore(float suhu) {
     Serial.println("  ✅ SUKSES: Data suhu berhasil tersimpan di Firestore!");
   } else if (httpCode == 403) {
     Serial.println("  ⚠️ GAGAL 403: Rules di Firebase Console masih terkunci!");
-    Serial.println("     Buka Firebase Console -> Firestore Database -> Rules:");
-    Serial.println("     Ubah jadi: match /{document=**} { allow read, write: if true; }");
   } else {
     Serial.printf("  Detail: %s\\n", https.getString().c_str());
   }
@@ -190,14 +249,36 @@ void setup() {
   delay(1000);
   Serial.println("\\n=== FAVORA — ESP32 Sensor Inframerah GY-906 ===");
   initSensor();
-  WiFi.begin(ssid, password);
-  Serial.printf("Menghubungkan ke Wi-Fi '%s'", ssid);
-  while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
-  Serial.printf("\\nWi-Fi Terhubung! IP: %s\\n", WiFi.localIP().toString().c_str());
+
+  // Membaca Wi-Fi dari Flash NVS ESP32 (jika sebelumnya pernah disinkronkan)
+  prefs.begin("favora", false);
+  currentWifiSSID = prefs.getString("wifi_ssid", ssid);
+  currentWifiPass = prefs.getString("wifi_pass", password);
+  prefs.end();
+
+  WiFi.begin(currentWifiSSID.c_str(), currentWifiPass.c_str());
+  Serial.printf("Menghubungkan ke Wi-Fi '%s'", currentWifiSSID.c_str());
+  int retry = 0;
+  while (WiFi.status() != WL_CONNECTED && retry < 25) {
+    delay(500); Serial.print(".");
+    retry++;
+  }
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("\\nWi-Fi Terhubung! IP: %s\\n", WiFi.localIP().toString().c_str());
+  } else {
+    Serial.println("\\n[Peringatan] Belum dapat terhubung. Cek SSID & Password di Dashboard.");
+  }
+
   configTime(0, 0, "time.google.com", "pool.ntp.org");
 }
 
 void loop() {
+  // Cek apakah ada perubahan Wi-Fi router atau interval dari Web Dashboard setiap 15 detik
+  if (millis() - lastConfigCheck >= 15000 || lastConfigCheck == 0) {
+    lastConfigCheck = millis();
+    checkRemoteConfig();
+  }
+
   float temp = 0.0f;
   if (readTempC(temp)) {
     Serial.printf("[Sensor MLX90614] Suhu Objek: %.2f °C\\n", temp);

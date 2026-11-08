@@ -701,6 +701,15 @@ export default function App() {
   };
 
   const handleUpdateThresholds = async (partial: Partial<ThresholdConfig>) => {
+    if (!currentUser) {
+      setStatusMessage('Login dengan Google dulu untuk mengubah batas suhu.');
+      try {
+        await loginWithGoogle();
+      } catch {
+        // ignore
+      }
+      return;
+    }
     const updated: ThresholdConfig = { ...thresholds, ...partial };
     setThresholds(updated);
     try {
@@ -708,22 +717,20 @@ export default function App() {
     } catch {
       // ignore
     }
-    if (isUserOwner(currentUser) && currentUser?.email) {
-      try {
-        await updateThresholdSettings(
-          {
-            tempMinOptimal: updated.tempMinOptimal,
-            tempMaxOptimal: updated.tempMaxOptimal,
-            tempCritical: updated.tempCritical,
-            pressureMinUse: 0,
-            pressureMaxSafe: 0,
-            pressureCritical: 0
-          },
-          currentUser.email
-        );
-      } catch (err) {
-        console.error('Gagal sinkronisasi batas optimal ke Firestore:', err);
-      }
+    try {
+      await updateThresholdSettings(
+        {
+          tempMinOptimal: updated.tempMinOptimal,
+          tempMaxOptimal: updated.tempMaxOptimal,
+          tempCritical: updated.tempCritical,
+          pressureMinUse: 0,
+          pressureMaxSafe: 0,
+          pressureCritical: 0
+        },
+        currentUser.email
+      );
+    } catch (err) {
+      console.error('Gagal sinkronisasi batas optimal ke Firestore:', err);
     }
   };
 
@@ -977,15 +984,14 @@ export default function App() {
             </button>
           )}
 
-          {/* Tombol Sambung Cepat ESP32 - Hanya muncul untuk akun Admin / Irfan */}
-          {isUserOwner(currentUser) && (
-            <button
-              type="button"
-              onClick={() => setQuickConnectOpen(true)}
-              aria-label="Sambungkan ke ESP32"
-              title="Sambungkan ke ESP32 (Akses Admin)"
-              className="p-1 rounded-full hover:bg-amber-500/15 active:scale-95 transition-all duration-300 cursor-pointer flex items-center justify-center group"
-            >
+          {/* Tombol Sambung Cepat ESP32 */}
+          <button
+            type="button"
+            onClick={() => setQuickConnectOpen(true)}
+            aria-label="Sambungkan ke ESP32"
+            title="Sambungkan ke ESP32"
+            className="p-1 rounded-full hover:bg-amber-500/15 active:scale-95 transition-all duration-300 cursor-pointer flex items-center justify-center group"
+          >
               <img
                 src="https://cdn-icons-png.flaticon.com/128/453/453219.png"
                 alt="Sambungkan"
@@ -995,7 +1001,6 @@ export default function App() {
                 draggable={false}
               />
             </button>
-          )}
 
           {/* Navigasi Utama: Ikon Dashboard Sensor (Kuning Orange Jelas) */}
           <button
@@ -1086,7 +1091,7 @@ export default function App() {
       </main>
 
       {/* Modal Sambungkan Cepat ESP32 */}
-      {quickConnectOpen && isUserOwner(currentUser) && (
+      {quickConnectOpen && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs"
           onClick={() => setQuickConnectOpen(false)}

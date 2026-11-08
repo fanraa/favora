@@ -337,7 +337,7 @@ export function subscribeDeviceSettings(
 }
 
 /**
- * Mengubah interval pengiriman ESP32 ke Firestore (Hanya untuk akun pemilik)
+ * Mengubah interval pengiriman ESP32 ke Firestore (Wajib login Google — akun apa saja)
  */
 export async function updateDeviceInterval(
   seconds: 2 | 5 | 10,
@@ -363,6 +363,7 @@ export async function updateDeviceInterval(
 
 /**
  * Mengubah Kredensial Wi-Fi Target & Hotspot Mandiri (AP) ESP32 dari jarak jauh (Remote Config Cloud)
+ * Wajib login Google — akun apa saja
  */
 export async function updateDeviceWifiAndAp(
   credentials: {
@@ -370,27 +371,29 @@ export async function updateDeviceWifiAndAp(
     wifi_pass: string;
     ap_ssid: string;
     ap_pass: string;
+    send_interval_sec?: 2 | 5 | 10;
   },
   userEmail: string
 ): Promise<void> {
   try {
     const docRef = doc(db, 'device_settings', 'esp32_config');
     const version = String(Date.now());
-    await setDoc(
-      docRef,
-      {
-        wifi_ssid: credentials.wifi_ssid,
-        wifi_pass: credentials.wifi_pass,
-        ap_ssid: credentials.ap_ssid.trim() || 'FAVORA-ESP32-AP',
-        ap_pass: credentials.ap_pass || '12345678',
-        credentials_version: version,
-        last_synced_from: 'web_portal',
-        credentials_updated_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        updated_by: userEmail
-      },
-      { merge: true }
-    );
+    const payload: any = {
+      wifi_ssid: credentials.wifi_ssid,
+      wifi_pass: credentials.wifi_pass,
+      ap_ssid: credentials.ap_ssid.trim() || 'FAVORA-ESP32-AP',
+      ap_pass: credentials.ap_pass || '12345678',
+      credentials_version: version,
+      last_synced_from: 'web_portal',
+      credentials_updated_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      updated_by: userEmail
+    };
+    if (credentials.send_interval_sec) {
+      payload.send_interval_sec = credentials.send_interval_sec;
+      payload.interval_ms = credentials.send_interval_sec * 1000;
+    }
+    await setDoc(docRef, payload, { merge: true });
   } catch (error) {
     const err = handleFirestoreError(error, OperationType.UPDATE, SETTINGS_DOC_PATH);
     throw err;
@@ -431,7 +434,7 @@ export function subscribeThresholdSettings(
 }
 
 /**
- * Mengubah batas optimal suhu & tekanan ke Firestore (Hanya untuk akun pemilik/admin)
+ * Mengubah batas optimal suhu & tekanan ke Firestore (Wajib login Google — akun apa saja)
  * Perubahan akan langsung disinkronkan ke semua orang
  */
 export async function updateThresholdSettings(

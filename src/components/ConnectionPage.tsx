@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Bluetooth,
   Wifi,
@@ -114,62 +114,97 @@ export const ConnectionPage: React.FC<ConnectionPageProps> = ({
   const [showAlarmInfo, setShowAlarmInfo] = useState(false);
   const alarmInfoBtnRef = useRef<HTMLButtonElement | null>(null);
 
-  // Berlangganan konfigurasi interval remote
-  useEffect(() => {
-    if (!isOwner) return;
-    const unsub = subscribeDeviceSettings((cfg) => {
-      setDeviceConfig(cfg);
-      setActiveInterval(cfg.send_interval_sec);
-    });
-    return () => unsub();
-  }, [isOwner]);
-
   const handleSelectInterval = async (sec: 2 | 5 | 10) => {
-    if (!isOwner || !currentUser?.email) return;
+    if (!currentUser) {
+      setIntervalFeedback('Login dengan Google dulu untuk mengubah interval.');
+      onLoginGoogle?.();
+      return;
+    }
     setIsSavingInterval(true);
     setIntervalFeedback(null);
     try {
       await updateDeviceInterval(sec, currentUser.email);
       setActiveInterval(sec);
-      setIntervalFeedback(`Berhasil disimpan! ESP32 akan menyesuaikan interval ke ${sec} detik.`);
+      setIntervalFeedback(`Interval pengiriman berhasil diubah ke ${sec} detik!`);
       setTimeout(() => setIntervalFeedback(null), 4000);
     } catch (err: any) {
-      setIntervalFeedback(`Gagal menyimpan interval: ${err?.message || 'Periksa aturan izin.'}`);
+      setIntervalFeedback(`Gagal menyimpan interval: ${err?.message || 'Periksa koneksi.'}`);
     } finally {
       setIsSavingInterval(false);
     }
   };
 
-  // Kredensial Wi-Fi
-  const [wifiSsid, setWifiSsid] = useState('FanraRA');
-  const [wifiPass, setWifiPass] = useState('#I47r32a6');
+  const isUserTypingWifiRef = useRef(false);
+
+  // Kredensial Wi-Fi dengan fallback localStorage & remote Firestore
+  const [wifiSsid, setWifiSsid] = useState(() => {
+    try {
+      return localStorage.getItem('favora_wifi_ssid') || 'FanraRA';
+    } catch {
+      return 'FanraRA';
+    }
+  });
+  const [wifiPass, setWifiPass] = useState(() => {
+    try {
+      return localStorage.getItem('favora_wifi_pass') || '#I47r32a6';
+    } catch {
+      return '#I47r32a6';
+    }
+  });
   const [apSsid, setApSsid] = useState('FAVORA-ESP32-AP');
   const [apPass, setApPass] = useState('12345678');
   const [showWifiPass, setShowWifiPass] = useState(false);
   const [showApPass, setShowApPass] = useState(false);
+  const [showApConfig, setShowApConfig] = useState(false);
   const [isSavingCredentials, setIsSavingCredentials] = useState(false);
   const [credentialsFeedback, setCredentialsFeedback] = useState<{
     type: 'success' | 'error';
     message: string;
   } | null>(null);
 
+  // Berlangganan konfigurasi interval & Wi-Fi remote dari Firestore
   useEffect(() => {
-    if (deviceConfig) {
-      if (deviceConfig.wifi_ssid) setWifiSsid(deviceConfig.wifi_ssid);
-      if (deviceConfig.wifi_pass) setWifiPass(deviceConfig.wifi_pass);
-      if (deviceConfig.ap_ssid) setApSsid(deviceConfig.ap_ssid);
-      if (deviceConfig.ap_pass) setApPass(deviceConfig.ap_pass);
-    }
-  }, [deviceConfig]);
+    const unsub = subscribeDeviceSettings((cfg) => {
+      setDeviceConfig(cfg);
+      if (cfg.send_interval_sec) setActiveInterval(cfg.send_interval_sec);
+      if (!isUserTypingWifiRef.current) {
+        if (cfg.wifi_ssid) {
+          setWifiSsid(cfg.wifi_ssid);
+          try { localStorage.setItem('favora_wifi_ssid', cfg.wifi_ssid); } catch {}
+        }
+        if (cfg.wifi_pass) {
+          setWifiPass(cfg.wifi_pass);
+          try { localStorage.setItem('favora_wifi_pass', cfg.wifi_pass); } catch {}
+        }
+        if (cfg.ap_ssid) setApSsid(cfg.ap_ssid);
+        if (cfg.ap_pass) setApPass(cfg.ap_pass);
+      }
+    });
+    return () => unsub();
+  }, []);
 
   const handleSaveCredentials = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!isOwner || !currentUser?.email) return;
+    if (!wifiSsid.trim()) {
+      setCredentialsFeedback({
+        type: 'error',
+        message: 'Nama Wi-Fi Router (SSID) tidak boleh kosong.'
+      });
+      return;
+    }
     if (apPass.length < 8) {
       setCredentialsFeedback({
         type: 'error',
         message: 'Password Hotspot AP harus minimal 8 karakter.'
       });
+      return;
+    }
+    if (!currentUser) {
+      setCredentialsFeedback({
+        type: 'error',
+        message: 'Login dengan Google dulu untuk menyimpan kredensial Wi-Fi.'
+      });
+      onLoginGoogle?.();
       return;
     }
 
@@ -181,19 +216,27 @@ export const ConnectionPage: React.FC<ConnectionPageProps> = ({
           wifi_ssid: wifiSsid.trim(),
           wifi_pass: wifiPass,
           ap_ssid: apSsid.trim(),
-          ap_pass: apPass
+          ap_pass: apPass,
+          send_interval_sec: activeInterval
         },
         currentUser.email
       );
+      try {
+        localStorage.setItem('favora_wifi_ssid', wifiSsid.trim());
+        localStorage.setItem('favora_wifi_pass', wifiPass);
+      } catch {
+        // ignore
+      }
+      isUserTypingWifiRef.current = false;
       setCredentialsFeedback({
         type: 'success',
-        message: 'Kredensial berhasil disimpan ke Cloud! ESP32 akan sinkron otomatis.'
+        message: `Kredensial Wi-Fi "${wifiSsid.trim()}" berhasil disimpan ke Firestore! ESP32 online akan beralih dalam ~15 detik.`
       });
       setTimeout(() => setCredentialsFeedback(null), 5000);
     } catch (err: any) {
       setCredentialsFeedback({
         type: 'error',
-        message: `Gagal menyimpan kredensial: ${err?.message || 'Periksa koneksi.'}`
+        message: `Gagal menyimpan kredensial: ${err?.message || 'Periksa koneksi internet.'}`
       });
     } finally {
       setIsSavingCredentials(false);
@@ -250,15 +293,47 @@ export const ConnectionPage: React.FC<ConnectionPageProps> = ({
       ? ARDUINO_SKETCHES[settings.activeMethod]
       : null;
 
+  // Kode sketch dinamis yang otomatis mencantumkan nama SSID & password Wi-Fi yang diatur user
+  const dynamicFirestoreCode = useMemo(() => {
+    const raw = ARDUINO_SKETCHES.cloud_hotspot.code;
+    const safeSsid = wifiSsid.replace(/"/g, '\\"');
+    const safePass = wifiPass.replace(/"/g, '\\"');
+    return raw
+      .replace('const char* ssid = "FanraRA";', `const char* ssid = "${safeSsid}";`)
+      .replace('const char* password = "#I47r32a6";', `const char* password = "${safePass}";`)
+      .replace('delay(5000);', `delay(${activeInterval * 1000}); // Interval pengiriman ${activeInterval} detik`);
+  }, [wifiSsid, wifiPass, activeInterval]);
+
+  const activeCodeToDisplay =
+    settings.activeMethod === 'cloud_hotspot'
+      ? dynamicFirestoreCode
+      : (activeSketch?.code || '');
+
   const handleCopyCode = async () => {
-    if (!activeSketch) return;
+    if (!activeCodeToDisplay) return;
     try {
-      await navigator.clipboard.writeText(activeSketch.code);
+      await navigator.clipboard.writeText(activeCodeToDisplay);
       setCopiedCode(true);
       setTimeout(() => setCopiedCode(false), 2000);
     } catch {
       // ignore
     }
+  };
+
+  const handleDownloadIno = () => {
+    if (!activeCodeToDisplay) return;
+    const blob = new Blob([activeCodeToDisplay], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download =
+      settings.activeMethod === 'cloud_hotspot'
+        ? 'FAVORA_ESP32_Firestore.ino'
+        : `FAVORA_ESP32_${settings.activeMethod}.ino`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   const renderAudioAlarmCard = () => (
@@ -342,21 +417,6 @@ export const ConnectionPage: React.FC<ConnectionPageProps> = ({
     </div>
   );
 
-  // Jika belum login dengan akun @student.itera.ac.id atau admin
-  // Hanya tampilkan Install PWA dan Alarm Peringatan Suhu saja
-  if (!isOwner) {
-    return (
-      <div className="space-y-5 text-slate-800">
-        {/* 1. Pasang Aplikasi ke Layar Utama */}
-        <PWAInstallCard />
-
-        {/* 2. Suara Alarm Peringatan Suhu */}
-        {renderAudioAlarmCard()}
-      </div>
-    );
-  }
-
-  // Tampilan Penuh untuk Mahasiswa ITERA & Administrator
   return (
     <div className="space-y-5 text-slate-800">
       {/* Kartu Panduan PWA di Bagian Paling Atas */}
@@ -579,9 +639,250 @@ export const ConnectionPage: React.FC<ConnectionPageProps> = ({
           </div>
         </section>
 
-        {/* Kolom Kanan: Pengaturan Thresholds Suhu, Audio Alarm, dan Kode Arduino */}
+        {/* Kolom Kanan: Pengaturan Wi-Fi Router, Thresholds Suhu, Audio Alarm, dan Kode Arduino */}
         <section className="lg:col-span-6 space-y-5">
-          {/* 1. Pengaturan Ambang Batas Suhu (Thresholds) */}
+          {/* 1. Pengaturan Wi-Fi Router ESP32 (Sinkron Cloud Firestore) */}
+          <div className="bg-white/65 sm:bg-white/70 backdrop-blur-md border border-white/80 rounded-2xl p-5 space-y-4 shadow-xs">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-200/60">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-amber-500/15 border border-amber-300/80 text-amber-700">
+                  <Wifi className="w-4 h-4 text-amber-600" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Konfigurasi Wi-Fi Router ESP32
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Koneksi router target agar ESP32 dapat terhubung ke internet
+                  </p>
+                </div>
+              </div>
+              <span className="text-[10px] font-mono text-emerald-800 bg-emerald-100/80 px-2 py-0.5 rounded-full border border-emerald-200 font-semibold shrink-0 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                Firestore Sync
+              </span>
+            </div>
+
+            <form onSubmit={handleSaveCredentials} className="space-y-3.5">
+              {/* Input SSID Wi-Fi Router */}
+              <div className="space-y-1">
+                <label className="block text-xs font-semibold text-slate-700">
+                  Nama Wi-Fi Router (SSID)
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={wifiSsid}
+                    onChange={(e) => {
+                      isUserTypingWifiRef.current = true;
+                      setWifiSsid(e.target.value);
+                    }}
+                    placeholder="Contoh: FanraRA / MyHomeWiFi"
+                    required
+                    className="w-full px-3 py-2 text-xs font-mono bg-white/85 border border-white/95 rounded-xl text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 shadow-2xs"
+                  />
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                    <Wifi className="w-3.5 h-3.5" />
+                  </div>
+                </div>
+                <span className="text-[10px] text-slate-500 block">
+                  Nama jaringan Wi-Fi 2.4 GHz atau Hotspot HP yang dihubungkan ke ESP32.
+                </span>
+              </div>
+
+              {/* Input Password Wi-Fi Router */}
+              <div className="space-y-1">
+                <label className="block text-xs font-semibold text-slate-700">
+                  Kata Sandi Wi-Fi Router (Password)
+                </label>
+                <div className="relative">
+                  <input
+                    type={showWifiPass ? 'text' : 'password'}
+                    value={wifiPass}
+                    onChange={(e) => {
+                      isUserTypingWifiRef.current = true;
+                      setWifiPass(e.target.value);
+                    }}
+                    placeholder="Masukkan kata sandi Wi-Fi (kosongkan jika terbuka)"
+                    className="w-full pl-3 pr-10 py-2 text-xs font-mono bg-white/85 border border-white/95 rounded-xl text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 shadow-2xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowWifiPass((prev) => !prev)}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1 rounded-md transition-colors cursor-pointer"
+                    title={showWifiPass ? 'Sembunyikan password' : 'Lihat password'}
+                  >
+                    {showWifiPass ? (
+                      <EyeOff className="w-3.5 h-3.5" />
+                    ) : (
+                      <Eye className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                </div>
+                <span className="text-[10px] text-slate-500 block">
+                  Kata sandi otentikasi jaringan Wi-Fi router.
+                </span>
+              </div>
+
+              {/* Petunjuk Sinkronisasi Otomatis ESP32 */}
+              <div className="bg-amber-500/10 border border-amber-300/60 rounded-xl p-3 text-[11px] text-slate-700 space-y-1.5">
+                <div className="flex items-center gap-1.5 font-bold text-amber-900">
+                  <Info className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  <span>Cara Kerja Sinkronisasi Wi-Fi ESP32</span>
+                </div>
+                <ul className="list-disc list-inside space-y-1 text-slate-600 pl-0.5 leading-relaxed text-[10.5px]">
+                  <li>
+                    <strong className="text-slate-800">Saat ESP32 Online:</strong> ESP32 memeriksa pembaruan Wi-Fi dari Firestore setiap 15 detik. Begitu Anda klik <em>Simpan & Sinkronkan</em>, ESP32 otomatis beralih dan menyimpannya ke memori flash tanpa perlu flash ulang!
+                  </li>
+                  <li>
+                    <strong className="text-slate-800">Saat Router Lama Dimatikan / Offline:</strong> Gunakan tombol <em>Unduh .ino</em> di bawah (file otomatis terisi Wi-Fi baru ini) atau sambungkan HP ke Hotspot ESP32 <code>192.168.4.1</code>.
+                  </li>
+                </ul>
+              </div>
+
+              {/* Pilihan Interval Pengiriman Sensor ke Firestore */}
+              <div className="space-y-1.5 pt-1">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Interval Pengiriman Suhu ke Cloud
+                  </label>
+                  {intervalFeedback && (
+                    <span className="text-[10px] text-emerald-700 font-medium animate-in fade-in">
+                      {intervalFeedback}
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {([2, 5, 10] as const).map((sec) => (
+                    <button
+                      key={sec}
+                      type="button"
+                      disabled={isSavingInterval || isSavingCredentials}
+                      onClick={() => handleSelectInterval(sec)}
+                      className={`py-1.5 px-2 text-xs rounded-xl border text-center transition-all cursor-pointer font-medium ${
+                        activeInterval === sec
+                          ? 'bg-amber-500 text-white border-amber-600 font-semibold shadow-2xs'
+                          : 'bg-white/75 hover:bg-white text-slate-700 border-white/85'
+                      }`}
+                    >
+                      {sec} Detik {sec === 5 && '(Optimal)'}
+                    </button>
+                  ))}
+                </div>
+                <span className="text-[10px] text-slate-500 block">
+                  Frekuensi pengiriman paket temperatur Celsius ke Firestore (pvngblock).
+                </span>
+              </div>
+
+              {/* Accordion: Hotspot Mandiri ESP32 (AP 192.168.4.1) */}
+              <div className="pt-2 border-t border-slate-200/50">
+                <button
+                  type="button"
+                  onClick={() => setShowApConfig((prev) => !prev)}
+                  className="flex items-center justify-between w-full text-left text-xs font-medium text-slate-600 hover:text-slate-900 transition-colors cursor-pointer py-1"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Radio className="w-3.5 h-3.5 text-amber-600" />
+                    <span>Pengaturan Hotspot Mandiri ESP32 (AP Mode)</span>
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    {showApConfig ? 'Sembunyikan' : 'Buka Pengaturan'}
+                  </span>
+                </button>
+
+                {showApConfig && (
+                  <div className="space-y-3 pt-2 mt-1 bg-white/40 p-3 rounded-xl border border-white/70">
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-semibold text-slate-700">
+                        Nama Hotspot ESP32 (AP SSID)
+                      </label>
+                      <input
+                        type="text"
+                        value={apSsid}
+                        onChange={(e) => setApSsid(e.target.value)}
+                        className="w-full px-2.5 py-1.5 text-xs font-mono bg-white/80 border border-white/90 rounded-lg text-slate-900 focus:bg-white focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-[11px] font-semibold text-slate-700">
+                        Password Hotspot ESP32 (Min. 8 Karakter)
+                      </label>
+                      <div className="relative">
+                        <input
+                          type={showApPass ? 'text' : 'password'}
+                          value={apPass}
+                          onChange={(e) => setApPass(e.target.value)}
+                          className="w-full pl-2.5 pr-8 py-1.5 text-xs font-mono bg-white/80 border border-white/90 rounded-lg text-slate-900 focus:bg-white focus:outline-none focus:border-amber-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowApPass((prev) => !prev)}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-0.5 cursor-pointer"
+                        >
+                          {showApPass ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Feedback Pesan */}
+              {credentialsFeedback && (
+                <div
+                  className={`p-3 rounded-xl text-xs flex items-center gap-2 border ${
+                    credentialsFeedback.type === 'success'
+                      ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                      : 'bg-rose-50 text-rose-800 border-rose-200'
+                  }`}
+                >
+                  {credentialsFeedback.type === 'success' ? (
+                    <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                  ) : (
+                    <X className="w-4 h-4 text-rose-600 shrink-0" />
+                  )}
+                  <span className="leading-snug">{credentialsFeedback.message}</span>
+                </div>
+              )}
+
+              {/* Tombol Simpan & Sinkronkan */}
+              <div className="pt-2 flex items-center gap-2">
+                <button
+                  type="submit"
+                  disabled={isSavingCredentials}
+                  className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 active:scale-[0.99] rounded-xl transition-all cursor-pointer shadow-sm disabled:opacity-50"
+                >
+                  {isSavingCredentials ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Menyimpan ke Firestore...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4" />
+                      <span>Simpan & Sinkronkan Wi-Fi ke ESP32</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWifiSsid('FanraRA');
+                    setWifiPass('#I47r32a6');
+                    setApSsid('FAVORA-ESP32-AP');
+                    setApPass('12345678');
+                  }}
+                  title="Kembalikan nama Wi-Fi ke FanraRA"
+                  className="px-3 py-2.5 text-xs font-medium text-slate-700 bg-white/75 hover:bg-white border border-white/90 rounded-xl transition-colors cursor-pointer shrink-0"
+                >
+                  Default
+                </button>
+              </div>
+            </form>
+          </div>
+
+          {/* 2. Pengaturan Ambang Batas Suhu (Thresholds) */}
           <div className="bg-white/65 sm:bg-white/70 backdrop-blur-md border border-white/80 rounded-2xl p-5 space-y-3.5 shadow-xs">
             <div className="flex items-center justify-between pb-2 border-b border-slate-200/60">
               <div className="flex items-center gap-2">
@@ -659,11 +960,10 @@ export const ConnectionPage: React.FC<ConnectionPageProps> = ({
             </div>
           </div>
 
-          {/* 2. Audio Alarm Peringatan Suhu Kritis */}
+          {/* 3. Audio Alarm Peringatan Suhu Kritis */}
           {renderAudioAlarmCard()}
 
-
-          {/* 3. Kode Arduino ESP32 untuk Sensor Suhu */}
+          {/* 4. Kode Arduino ESP32 untuk Sensor Suhu */}
           {activeSketch && (
             <div className="bg-white/65 sm:bg-white/70 backdrop-blur-md border border-white/80 rounded-2xl p-5 space-y-3.5 shadow-xs overflow-hidden">
               <div className="flex items-start justify-between gap-2">
@@ -677,15 +977,15 @@ export const ConnectionPage: React.FC<ConnectionPageProps> = ({
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0">
-                  <a
-                    href="/FAVORA_ESP32_Firestore.ino"
-                    download="FAVORA_ESP32_Firestore.ino"
+                  <button
+                    type="button"
+                    onClick={handleDownloadIno}
                     className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-slate-700 bg-white/75 hover:bg-white border border-white/85 shadow-2xs rounded-lg transition-colors cursor-pointer"
                     title="Unduh file .ino lengkap siap upload ke ESP32"
                   >
                     <Download className="w-3.5 h-3.5 text-amber-600" />
                     <span className="hidden sm:inline">Unduh .ino</span>
-                  </a>
+                  </button>
 
                   <button
                     type="button"
@@ -709,7 +1009,7 @@ export const ConnectionPage: React.FC<ConnectionPageProps> = ({
 
               <div className="relative">
                 <pre className="bg-slate-950/90 backdrop-blur-xs text-slate-200 p-3.5 rounded-xl text-xs font-mono overflow-x-auto max-h-60 leading-relaxed border border-slate-800 shadow-inner">
-                  <code>{activeSketch.code}</code>
+                  <code>{activeCodeToDisplay}</code>
                 </pre>
               </div>
             </div>

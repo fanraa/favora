@@ -414,6 +414,8 @@ void checkRemoteDeviceConfig() {
     DynamicJsonDocument doc(2048);
     if (!deserializeJson(doc, https.getString()) && doc.containsKey("fields")) {
       JsonObject fields = doc["fields"];
+
+      // 1. Cek perubahan interval pengiriman
       if (fields.containsKey("send_interval_sec")) {
         long sec = fields["send_interval_sec"]["integerValue"] ? atol(fields["send_interval_sec"]["integerValue"]) : 5;
         if (sec >= 1 && sec <= 60 && (unsigned long)sec * 1000UL != sendIntervalMs) {
@@ -424,6 +426,34 @@ void checkRemoteDeviceConfig() {
           Serial.printf("[Cloud Config] Interval pengiriman diubah ke %ld detik\n", sec);
         }
       }
+
+      // 2. Cek perubahan Wi-Fi Router dari Web Portal
+      if (fields.containsKey("wifi_ssid") && fields.containsKey("wifi_pass")) {
+        String remoteSsid = fields["wifi_ssid"]["stringValue"] ? fields["wifi_ssid"]["stringValue"].as<String>() : "";
+        String remotePass = fields["wifi_pass"]["stringValue"] ? fields["wifi_pass"]["stringValue"].as<String>() : "";
+        String lastFrom = fields.containsKey("last_synced_from") && fields["last_synced_from"]["stringValue"]
+                            ? fields["last_synced_from"]["stringValue"].as<String>()
+                            : "";
+
+        if (remoteSsid.length() > 0 && lastFrom == "web_portal" && (remoteSsid != currentWifiSSID || remotePass != currentWifiPass)) {
+          Serial.println(F("\n======================================================="));
+          Serial.println(F("⚡ [SYNC CLOUD] Menerima Perubahan Wi-Fi Router dari Web!"));
+          Serial.printf("  SSID Target Baru: %s\n", remoteSsid.c_str());
+          Serial.println(F("  Menyimpan ke Flash NVS dan menghubungkan ulang..."));
+          Serial.println(F("=======================================================\n"));
+
+          currentWifiSSID = remoteSsid;
+          currentWifiPass = remotePass;
+          prefs.begin("favora", false);
+          prefs.putString("wifi_ssid", remoteSsid);
+          prefs.putString("wifi_pass", remotePass);
+          prefs.end();
+
+          WiFi.disconnect();
+          delay(1000);
+          WiFi.begin(currentWifiSSID.c_str(), currentWifiPass.c_str());
+        }
+      }
     }
   }
   https.end();
@@ -431,27 +461,8 @@ void checkRemoteDeviceConfig() {
 
 void syncLocalConfigToFirestore() {
   if (WiFi.status() != WL_CONNECTED) return;
-  WiFiClientSecure client;
-  client.setInsecure();
-  HTTPClient https;
-  String url = String("https://firestore.googleapis.com/v1/projects/") + FIREBASE_PROJECT_ID +
-               "/databases/" + FIRESTORE_DB_ID +
-               "/documents/device_settings/esp32_config?key=" + FIREBASE_API_KEY +
-               "&updateMask.fieldPaths=wifi_ssid&updateMask.fieldPaths=ap_ssid&updateMask.fieldPaths=last_synced_from&updateMask.fieldPaths=updated_at";
-  if (!https.begin(client, url)) return;
-  https.addHeader("Content-Type", "application/json");
-  DynamicJsonDocument doc(1024);
-  JsonObject fields = doc.createNestedObject("fields");
-  fields.createNestedObject("wifi_ssid")["stringValue"] = currentWifiSSID;
-  fields.createNestedObject("ap_ssid")["stringValue"] = currentApSSID;
-  fields.createNestedObject("last_synced_from")["stringValue"] = "esp32_hardware";
-  char rfc[32];
-  getRFC3339Timestamp(rfc, sizeof(rfc));
-  fields.createNestedObject("updated_at")["timestampValue"] = rfc;
-  String reqBody;
-  serializeJson(doc, reqBody);
-  https.PATCH(reqBody);
-  https.end();
+  // Cek konfigurasi cloud terbaru terlebih dahulu
+  checkRemoteDeviceConfig();
 }
 
 bool sendDataToFirestore(float tempC, const char* rfcTime) {
