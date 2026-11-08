@@ -419,13 +419,51 @@ export const ConnectionPage: React.FC<ConnectionPageProps> = ({
 
   return (
     <div className="space-y-5 text-slate-800">
-      {/* Kartu Panduan PWA di Bagian Paling Atas */}
+      {/* 1. Kartu Panduan PWA di Bagian Paling Atas */}
       <PWAInstallCard />
 
-      {/* Grid Utama Dua Kolom (Glassmorphic Theme) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-        {/* Kolom Kiri: Pilihan Metode Koneksi & Panel Parameter */}
-        <section className="lg:col-span-6 bg-white/65 sm:bg-white/70 backdrop-blur-md border border-white/80 rounded-2xl p-5 space-y-5 shadow-xs">
+      {!currentUser ? (
+        <div className="space-y-5">
+          {/* 2. Audio Alarm Peringatan Suhu Kritis (Tetap bisa diakses tanpa login) */}
+          {renderAudioAlarmCard()}
+
+          {/* 3. Kartu Informasi Otorisasi Pengaturan ESP32 */}
+          <div className="bg-white/65 sm:bg-white/70 backdrop-blur-md border border-white/80 rounded-2xl p-6 sm:p-8 text-center space-y-4 shadow-xs">
+            <div className="w-12 h-12 mx-auto rounded-2xl bg-amber-500/15 border border-amber-300 flex items-center justify-center text-amber-600 shadow-2xs">
+              <Lock className="w-6 h-6" />
+            </div>
+            <div className="max-w-md mx-auto space-y-1.5">
+              <h3 className="text-sm sm:text-base font-bold text-slate-900">
+                Masuk untuk Membuka Pengaturan Lengkap
+              </h3>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Pengaturan metode koneksi ESP32, konfigurasi Wi-Fi router jarak jauh, interval pengiriman Firestore, batas ambang suhu, dan kode Arduino firmware hanya dapat diakses setelah Anda masuk dengan akun Google.
+              </p>
+            </div>
+
+            {onLoginGoogle && (
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={onLoginGoogle}
+                  className="inline-flex items-center gap-2.5 px-5 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold shadow-xs hover:shadow-md transition-all active:scale-95 cursor-pointer"
+                >
+                  <img
+                    src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
+                    alt="Google"
+                    className="w-4 h-4 bg-white rounded-full p-0.5"
+                  />
+                  <span>Masuk dengan Akun Google</span>
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        /* Grid Utama Dua Kolom: Hanya Muncul Ketika Sudah Login */
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+          {/* Kolom Kiri: Pilihan Metode Koneksi & Panel Parameter */}
+          <section className="lg:col-span-6 bg-white/65 sm:bg-white/70 backdrop-blur-md border border-white/80 rounded-2xl p-5 space-y-5 shadow-xs">
           <div>
             <div className="flex items-center justify-between pb-2 border-b border-slate-200/60">
               <h2 className="text-sm font-bold text-slate-900 tracking-tight">
@@ -1016,6 +1054,7 @@ export const ConnectionPage: React.FC<ConnectionPageProps> = ({
           )}
         </section>
       </div>
+      )}
     </div>
   );
 };

@@ -9,6 +9,24 @@
     <link rel="manifest" href="/manifest.json" />
 
     <script>
+      // Kompatibilitas ekstensi browser (mencegah error "Cannot set property fetch of #<Window> which has only a getter")
+      try {
+        var _origFetch = window.fetch;
+        var _currFetch = _origFetch;
+        Object.defineProperty(window, 'fetch', {
+          configurable: true,
+          enumerable: true,
+          get: function() {
+            return _currFetch;
+          },
+          set: function(fn) {
+            _currFetch = fn;
+          }
+        });
+      } catch (err) {
+        // Fallback aman jika browser tidak mengizinkan redefinisi properti window.fetch
+      }
+
       // Tangkap event instalasi browser bawaan (Chrome/Edge/Android) sedini mungkin
       window.__pwaInstallPrompt = null;
       window.addEventListener('beforeinstallprompt', function(e) {

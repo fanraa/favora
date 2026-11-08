@@ -5,7 +5,5 @@
   "authDomain": "pvngblock.firebaseapp.com",
   "storageBucket": "pvngblock.firebasestorage.app",
   "messagingSenderId": "584313139",
-  "measurementId": "G-HDWEYSWS1H",
-  "oAuthClientId": "",
-  "recaptchaSiteKey": ""
+  "measurementId": "G-HDWEYSWS1H"
 }

@@ -161,7 +161,8 @@ void checkRemoteConfig() {
       
       // 1. Cek perubahan interval pengiriman
       if (fields.containsKey("send_interval_sec")) {
-        long sec = fields["send_interval_sec"]["integerValue"] ? atol(fields["send_interval_sec"]["integerValue"]) : 5;
+        const char* secStr = fields["send_interval_sec"]["integerValue"].as<const char*>();
+        long sec = (secStr != nullptr) ? atol(secStr) : 5;
         if (sec >= 1 && sec <= 60 && sec != sendIntervalSec) {
           sendIntervalSec = (int)sec;
           Serial.printf("[Cloud Sync] Interval pengiriman diubah ke %d detik\\n", sendIntervalSec);
@@ -169,28 +170,32 @@ void checkRemoteConfig() {
       }
 
       // 2. Cek perubahan Wi-Fi Router dari Web Dashboard
-      if (fields.containsKey("wifi_ssid") && fields.containsKey("wifi_pass")) {
-        String remoteSsid = fields["wifi_ssid"]["stringValue"] | "";
-        String remotePass = fields["wifi_pass"]["stringValue"] | "";
-        String lastFrom = fields["last_synced_from"]["stringValue"] | "";
+      if (fields.containsKey("wifi_ssid")) {
+        const char* rawSsid = fields["wifi_ssid"]["stringValue"].as<const char*>();
+        const char* rawPass = fields["wifi_pass"]["stringValue"].as<const char*>();
 
-        if (remoteSsid.length() > 0 && lastFrom == "web_portal" && (remoteSsid != currentWifiSSID || remotePass != currentWifiPass)) {
-          Serial.println("\\n=======================================================");
-          Serial.println("⚡ [SYNC CLOUD] Menerima Perubahan Wi-Fi Router dari Web!");
-          Serial.printf("  SSID Target Baru: %s\\n", remoteSsid.c_str());
-          Serial.println("  Menyimpan ke Flash NVS dan menghubungkan ulang...");
-          Serial.println("=======================================================\\n");
+        if (rawSsid != nullptr && strlen(rawSsid) > 0) {
+          String remoteSsid = String(rawSsid);
+          String remotePass = (rawPass != nullptr) ? String(rawPass) : String("");
 
-          currentWifiSSID = remoteSsid;
-          currentWifiPass = remotePass;
-          prefs.begin("favora", false);
-          prefs.putString("wifi_ssid", remoteSsid);
-          prefs.putString("wifi_pass", remotePass);
-          prefs.end();
+          if (remoteSsid != currentWifiSSID || remotePass != currentWifiPass) {
+            Serial.println("\\n=======================================================");
+            Serial.println("⚡ [SYNC CLOUD] Menerima Perubahan Wi-Fi Router dari Web!");
+            Serial.printf("  SSID Target Baru: %s\\n", remoteSsid.c_str());
+            Serial.println("  Menyimpan ke Flash NVS dan menghubungkan ulang...");
+            Serial.println("=======================================================\\n");
 
-          WiFi.disconnect();
-          delay(1000);
-          WiFi.begin(currentWifiSSID.c_str(), currentWifiPass.c_str());
+            currentWifiSSID = remoteSsid;
+            currentWifiPass = remotePass;
+            prefs.begin("favora", false);
+            prefs.putString("wifi_ssid", remoteSsid);
+            prefs.putString("wifi_pass", remotePass);
+            prefs.end();
+
+            WiFi.disconnect();
+            delay(1000);
+            WiFi.begin(currentWifiSSID.c_str(), currentWifiPass.c_str());
+          }
         }
       }
     }

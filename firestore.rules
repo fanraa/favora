@@ -2,11 +2,9 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     // Koleksi sensor_readings: pembacaan dan pengiriman data suhu dari ESP32 & web dashboard
-    // ESP32 mengirim lewat REST tanpa login, jadi create belum bisa dibatasi tanpa
-    // perubahan auth di firmware. Update/delete tetap dilarang untuk menjaga integritas log.
     match /sensor_readings/{readingId} {
       allow read, create: if true;
-      allow update, delete: if false;
+      allow update, delete: if false; // Menjaga integritas data log suhu
     }
 
     // Koleksi device_settings: hanya user yang login (pemilik, via dashboard web)
