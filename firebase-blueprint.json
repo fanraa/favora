@@ -1,0 +1,50 @@
+{
+  "entities": {
+    "SensorReading": {
+      "title": "SensorReading",
+      "description": "Pembacaan telemetri sensor suhu dan tekanan biogas dari perangkat IoT ESP32",
+      "type": "object",
+      "properties": {
+        "temperature": {
+          "type": "number",
+          "description": "Suhu dalam °C"
+        },
+        "pressure_kpa": {
+          "type": "number",
+          "description": "Tekanan dalam kPa"
+        },
+        "pressure_bar": {
+          "type": "number",
+          "description": "Tekanan dalam bar"
+        },
+        "pressure_psi": {
+          "type": "number",
+          "description": "Tekanan dalam psi"
+        },
+        "raw_pressure": {
+          "type": "number",
+          "description": "Data mentah sensor HX710B"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Waktu pembacaan sensor"
+        }
+      },
+      "required": [
+        "temperature",
+        "pressure_kpa",
+        "pressure_bar",
+        "pressure_psi",
+        "raw_pressure",
+        "timestamp"
+      ]
+    }
+  },
+  "firestore": {
+    "/sensor_readings/{readingId}": {
+      "schema": "SensorReading",
+      "description": "Koleksi data pembacaan sensor IoT ESP32 untuk BioSense ITERA"
+    }
+  }
+}

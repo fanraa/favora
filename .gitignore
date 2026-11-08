@@ -1,0 +1,13 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# File konfigurasi Firebase lokal user (tidak boleh ter-push ke GitHub)
+my-firebase-config.json
+*.local.json
+

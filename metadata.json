@@ -1,0 +1,11 @@
+{
+  "name": "Remix bIoTeragas",
+  "description": "Imported from GitHub",
+  "requestFramePermissions": [
+    "bluetooth",
+    "serial"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
