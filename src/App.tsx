@@ -31,12 +31,15 @@ import {
 
 const OWNER_EMAILS = [
   'irfanrizkiaditri@gmail.com',
-  'irfanrizkiaditri01@gmail.com'
+  'irfanrizkiaditri01@gmail.com',
+  'irfanrizkiaditricreator@gmail.com'
 ];
 
 function isUserOwner(user: User | null): boolean {
   if (!user || !user.email) return false;
-  return OWNER_EMAILS.includes(user.email.toLowerCase());
+  const email = user.email.toLowerCase().trim();
+  if (email.endsWith('@student.itera.ac.id') || email.endsWith('@itera.ac.id')) return true;
+  return OWNER_EMAILS.includes(email);
 }
 
 const DEFAULT_THRESHOLDS: ThresholdConfig = {
@@ -804,11 +807,19 @@ export default function App() {
     setQuickConnectOpen(false);
   };
 
+  const handleLogin = async () => {
+    try {
+      await loginWithGoogle();
+    } catch {
+      // silent
+    }
+  };
+
   const handleTestCloudPush = async () => {
     if (!currentUser) {
       try {
         setStatusMessage('Membuka login Google untuk otorisasi pengiriman...');
-        await loginWithGoogle();
+        await handleLogin();
       } catch {
         setStatusMessage('Login Google dibatalkan.');
         return;
@@ -1069,6 +1080,7 @@ export default function App() {
             onDisconnect={disconnectHardware}
             onTestCloudPush={handleTestCloudPush}
             onBackToDashboard={() => setActivePage('dashboard')}
+            onLoginGoogle={handleLogin}
           />
         )}
       </main>

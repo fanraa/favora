@@ -25,7 +25,9 @@ export const OWNER_EMAILS = [
 
 export function isUserOwner(user?: { email?: string | null } | null): boolean {
   if (!user?.email) return false;
-  return OWNER_EMAILS.includes(user.email.toLowerCase().trim());
+  const email = user.email.toLowerCase().trim();
+  if (email.endsWith('@student.itera.ac.id') || email.endsWith('@itera.ac.id')) return true;
+  return OWNER_EMAILS.includes(email);
 }
 
 /**

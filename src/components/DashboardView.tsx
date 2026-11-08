@@ -1,10 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
-  Download,
   Trash2,
   MoreVertical,
-  RefreshCw,
-  ImageDown
+  RefreshCw
 } from 'lucide-react';
 import { User } from 'firebase/auth';
 import {
@@ -12,12 +10,18 @@ import {
   SensorReading,
   ThresholdConfig
 } from '../types/biogas';
-import { InfoButton } from './InfoPopover';
+import { InfoButton, FloatingAnchorBox } from './InfoPopover';
 import {
   SensorHistoryChart,
   ChartRangePreset
 } from './SensorHistoryChart';
-import { exportSensorChartPng } from '../utils/exportChartPng';
+import {
+  exportSensorChartPng,
+  exportSensorDataXlsx,
+  exportSensorReportDoc,
+  exportSensorDataCsv,
+  exportSensorDataJson
+} from '../utils/exportReports';
 
 interface DashboardViewProps {
   currentReading: SensorReading;
@@ -122,31 +126,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 }) => {
   const [chartRangePreset, setChartRangePreset] = useState<ChartRangePreset>('15_logs');
   const [menuOpen, setMenuOpen] = useState(false);
-  const menuContainerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    const handleClickOutside = (e: MouseEvent | TouchEvent) => {
-      if (
-        menuContainerRef.current &&
-        !menuContainerRef.current.contains(e.target as Node)
-      ) {
-        setMenuOpen(false);
-      }
-    };
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMenuOpen(false);
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    document.addEventListener('touchstart', handleClickOutside);
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      document.removeEventListener('touchstart', handleClickOutside);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [menuOpen]);
+  const menuBtnRef = useRef<HTMLButtonElement | null>(null);
 
   const temp = currentReading.temperatureC;
 
@@ -394,8 +374,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           {/* Pojok Kanan: Tombol Titik 3 Opsi Riwayat */}
-          <div className="relative inline-flex items-center shrink-0" ref={menuContainerRef}>
+          <div className="relative inline-flex items-center shrink-0">
             <button
+              ref={menuBtnRef}
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
@@ -412,63 +393,167 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <MoreVertical className="w-4 h-4" />
             </button>
 
-            {/* Box Menu Kecil dengan Ujung Lancip yang tepat di bawah Titik 3 */}
-            {menuOpen && (
-              <div
-                className="absolute right-0 top-full mt-1.5 z-50 w-44 bg-white border border-slate-200 rounded-md shadow-xl p-1 text-left animate-in fade-in zoom-in-95 duration-100"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div
-                  aria-hidden="true"
-                  className="absolute -top-1.5 right-2 w-3 h-3 bg-white border-t border-l border-slate-200 rotate-45 pointer-events-none"
-                />
+            <FloatingAnchorBox
+              isOpen={menuOpen}
+              onClose={() => setMenuOpen(false)}
+              anchorEl={menuBtnRef.current}
+              maxWidth={275}
+            >
+              <div className="space-y-1 text-slate-800">
+                <div className="px-1.5 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 mb-1">
+                  Format Unduh Riwayat
+                </div>
 
-                <div className="flex flex-col space-y-0.5 relative z-10">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      exportSensorChartPng({
-                        history,
-                        thresholds,
-                        rangePreset: chartRangePreset
-                      });
-                    }}
-                    className="flex items-center gap-2 w-full px-2.5 py-1.5 text-xs text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded transition-colors cursor-pointer text-left"
-                  >
-                    <ImageDown className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                    <div className="flex flex-col min-w-0 leading-tight">
-                      <span>Unduh Grafik (PNG)</span>
-                      <span className="text-[9.5px] text-slate-400 truncate">
-                        Grafik Suhu
-                      </span>
-                    </div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      handleDownloadCsv();
-                    }}
-                    className="flex items-center gap-2 w-full px-2.5 py-1.5 text-xs text-slate-700 hover:text-slate-900 hover:bg-slate-100 rounded transition-colors cursor-pointer text-left"
-                  >
-                    <Download className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                    <span>Unduh Data (CSV)</span>
-                  </button>
+                {/* 1. Unduh Word (.DOC) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    exportSensorReportDoc({
+                      history,
+                      thresholds,
+                      rangePreset: chartRangePreset
+                    });
+                  }}
+                  className="flex items-center gap-2.5 w-full p-2 text-xs text-slate-700 hover:text-slate-900 hover:bg-amber-50/80 rounded-lg transition-colors cursor-pointer text-left group"
+                >
+                  <img
+                    src="https://cdn-icons-png.flaticon.com/128/2991/2991108.png"
+                    alt="Word DOC"
+                    className="w-5 h-5 object-contain shrink-0 group-hover:scale-110 transition-transform"
+                    draggable={false}
+                  />
+                  <div className="flex flex-col min-w-0 leading-tight">
+                    <span className="font-semibold text-slate-900">Dokumen Word (.doc)</span>
+                    <span className="text-[9.5px] text-slate-400 truncate">
+                      Laporan resmi + Grafik + Tabel
+                    </span>
+                  </div>
+                </button>
+
+                {/* 2. Unduh Excel (.XLSX) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    exportSensorDataXlsx({
+                      history,
+                      thresholds,
+                      rangePreset: chartRangePreset
+                    });
+                  }}
+                  className="flex items-center gap-2.5 w-full p-2 text-xs text-slate-700 hover:text-slate-900 hover:bg-amber-50/80 rounded-lg transition-colors cursor-pointer text-left group"
+                >
+                  <img
+                    src="https://cdn-icons-png.flaticon.com/128/2504/2504768.png"
+                    alt="Excel XLSX"
+                    className="w-5 h-5 object-contain shrink-0 group-hover:scale-110 transition-transform"
+                    draggable={false}
+                  />
+                  <div className="flex flex-col min-w-0 leading-tight">
+                    <span className="font-semibold text-slate-900">Excel (.xlsx)</span>
+                    <span className="text-[9.5px] text-slate-400 truncate">
+                      Data riwayat & ringkasan statistik
+                    </span>
+                  </div>
+                </button>
+
+                {/* 3. Unduh Gambar Grafik (.PNG) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    exportSensorChartPng({
+                      history,
+                      thresholds,
+                      rangePreset: chartRangePreset
+                    });
+                  }}
+                  className="flex items-center gap-2.5 w-full p-2 text-xs text-slate-700 hover:text-slate-900 hover:bg-amber-50/80 rounded-lg transition-colors cursor-pointer text-left group"
+                >
+                  <img
+                    src="https://cdn-icons-png.flaticon.com/128/337/337948.png"
+                    alt="Gambar PNG"
+                    className="w-5 h-5 object-contain shrink-0 group-hover:scale-110 transition-transform"
+                    draggable={false}
+                  />
+                  <div className="flex flex-col min-w-0 leading-tight">
+                    <span className="font-semibold text-slate-900">Gambar Grafik (.png)</span>
+                    <span className="text-[9.5px] text-slate-400 truncate">
+                      Visualisasi grafik resolusi tinggi
+                    </span>
+                  </div>
+                </button>
+
+                {/* 4. Unduh Data CSV (.CSV) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    exportSensorDataCsv({
+                      history,
+                      thresholds,
+                      rangePreset: chartRangePreset
+                    });
+                  }}
+                  className="flex items-center gap-2.5 w-full p-2 text-xs text-slate-700 hover:text-slate-900 hover:bg-amber-50/80 rounded-lg transition-colors cursor-pointer text-left group"
+                >
+                  <img
+                    src="https://cdn-icons-png.flaticon.com/128/14422/14422338.png"
+                    alt="CSV"
+                    className="w-5 h-5 object-contain shrink-0 group-hover:scale-110 transition-transform"
+                    draggable={false}
+                  />
+                  <div className="flex flex-col min-w-0 leading-tight">
+                    <span className="font-semibold text-slate-900">Format Tabel (.csv)</span>
+                    <span className="text-[9.5px] text-slate-400 truncate">
+                      Tabel terpisah koma
+                    </span>
+                  </div>
+                </button>
+
+                {/* 5. Unduh Data JSON (.JSON) */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    exportSensorDataJson({
+                      history,
+                      thresholds,
+                      rangePreset: chartRangePreset
+                    });
+                  }}
+                  className="flex items-center gap-2.5 w-full p-2 text-xs text-slate-700 hover:text-slate-900 hover:bg-amber-50/80 rounded-lg transition-colors cursor-pointer text-left group"
+                >
+                  <img
+                    src="https://cdn-icons-png.flaticon.com/128/136/136525.png"
+                    alt="JSON"
+                    className="w-5 h-5 object-contain shrink-0 group-hover:scale-110 transition-transform"
+                    draggable={false}
+                  />
+                  <div className="flex flex-col min-w-0 leading-tight">
+                    <span className="font-semibold text-slate-900">Data Mentah (.json)</span>
+                    <span className="text-[9.5px] text-slate-400 truncate">
+                      Struktur JSON telemetri IoT
+                    </span>
+                  </div>
+                </button>
+
+                <div className="border-t border-slate-100 my-1 pt-1">
                   <button
                     type="button"
                     onClick={() => {
                       setMenuOpen(false);
                       onClearHistory();
                     }}
-                    className="flex items-center gap-2 w-full px-2.5 py-1.5 text-xs text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer text-left"
+                    className="flex items-center gap-2.5 w-full px-2 py-1.5 text-xs text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer text-left"
                   >
-                    <Trash2 className="w-3.5 h-3.5 text-rose-500 shrink-0" />
-                    <span>Hapus Riwayat</span>
+                    <Trash2 className="w-4 h-4 text-rose-500 shrink-0" />
+                    <span className="font-medium">Hapus Riwayat</span>
                   </button>
                 </div>
               </div>
-            )}
+            </FloatingAnchorBox>
           </div>
         </div>
 

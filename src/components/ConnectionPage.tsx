@@ -25,7 +25,8 @@ import {
   Smartphone,
   Info,
   X,
-  Thermometer
+  Thermometer,
+  GraduationCap
 } from 'lucide-react';
 import { User } from 'firebase/auth';
 import {
@@ -66,6 +67,7 @@ interface ConnectionPageProps {
   onDisconnect: () => void;
   onTestCloudPush: () => void;
   onBackToDashboard?: () => void;
+  onLoginGoogle?: () => void;
 }
 
 interface MethodCardItem {
@@ -93,11 +95,16 @@ export const ConnectionPage: React.FC<ConnectionPageProps> = ({
   onStartPollingUrl,
   onDisconnect,
   onTestCloudPush,
-  onBackToDashboard
+  onBackToDashboard,
+  onLoginGoogle
 }) => {
+  const emailLower = currentUser?.email ? currentUser.email.toLowerCase().trim() : '';
+  const isStudent = emailLower.endsWith('@student.itera.ac.id') || emailLower.endsWith('@itera.ac.id');
   const isOwner = Boolean(
-    currentUser?.email &&
-      OWNER_EMAILS.includes(currentUser.email.toLowerCase().trim())
+    emailLower && (
+      isStudent ||
+      OWNER_EMAILS.includes(emailLower)
+    )
   );
 
   const [activeInterval, setActiveInterval] = useState<2 | 5 | 10>(5);
@@ -254,6 +261,102 @@ export const ConnectionPage: React.FC<ConnectionPageProps> = ({
     }
   };
 
+  const renderAudioAlarmCard = () => (
+    <div className="bg-white/65 sm:bg-white/70 backdrop-blur-md border border-white/80 rounded-2xl p-4 sm:p-5 flex items-center justify-between gap-3 shadow-xs">
+      <div className="flex items-center gap-3 min-w-0">
+        <button
+          type="button"
+          onClick={onToggleAlarmSound}
+          className={`p-2.5 rounded-xl border transition-colors cursor-pointer shrink-0 ${
+            alarmSoundEnabled
+              ? 'bg-amber-500/15 text-amber-800 border-amber-300/80'
+              : 'bg-white/60 text-slate-400 border-white/80'
+          }`}
+          title={alarmSoundEnabled ? 'Alarm Suara Aktif' : 'Alarm Suara Senyap'}
+        >
+          {alarmSoundEnabled ? (
+            <Volume2 className="w-5 h-5 text-amber-600" />
+          ) : (
+            <VolumeX className="w-5 h-5 text-slate-400" />
+          )}
+        </button>
+
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5">
+            <h4 className="text-xs font-bold text-slate-900 truncate">
+              Suara Alarm Peringatan Suhu
+            </h4>
+            <button
+              ref={alarmInfoBtnRef}
+              type="button"
+              onClick={() => setShowAlarmInfo((prev) => !prev)}
+              title="Informasi Alarm"
+              className="text-slate-400 hover:text-slate-700 p-0.5 cursor-pointer"
+            >
+              <Info className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-500 truncate">
+            {alarmSoundEnabled
+              ? `Aktif • Berbunyi jika suhu ≥ ${thresholds.tempCritical}°C`
+              : 'Alarm suara saat ini dimatikan (Senyap)'}
+          </p>
+        </div>
+      </div>
+
+      <FloatingAnchorBox
+        isOpen={showAlarmInfo}
+        onClose={() => setShowAlarmInfo(false)}
+        anchorEl={alarmInfoBtnRef.current}
+        maxWidth={275}
+      >
+        <div className="space-y-2 text-xs text-slate-800">
+          <div className="flex items-center justify-between pb-1.5 border-b border-slate-100 font-bold">
+            <span>Alarm Suhu Kritis</span>
+            <button
+              type="button"
+              onClick={() => setShowAlarmInfo(false)}
+              className="text-slate-400 hover:text-slate-700 p-0.5 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-600 leading-relaxed">
+            Menghasilkan nada sirine darurat otomatis melalui browser jika pembacaan suhu melewati ambang batas kritis (≥{thresholds.tempCritical}°C).
+          </p>
+        </div>
+      </FloatingAnchorBox>
+
+      <div className="flex items-center gap-2 shrink-0">
+        {onTestAlarmSound && (
+          <button
+            type="button"
+            onClick={onTestAlarmSound}
+            title="Uji coba nada suara alarm"
+            className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white/75 hover:bg-white text-slate-800 border border-white/85 shadow-2xs transition-colors cursor-pointer"
+          >
+            Uji Suara
+          </button>
+        )}
+      </div>
+    </div>
+  );
+
+  // Jika belum login dengan akun @student.itera.ac.id atau admin
+  // Hanya tampilkan Install PWA dan Alarm Peringatan Suhu saja
+  if (!isOwner) {
+    return (
+      <div className="space-y-5 text-slate-800">
+        {/* 1. Pasang Aplikasi ke Layar Utama */}
+        <PWAInstallCard />
+
+        {/* 2. Suara Alarm Peringatan Suhu */}
+        {renderAudioAlarmCard()}
+      </div>
+    );
+  }
+
+  // Tampilan Penuh untuk Mahasiswa ITERA & Administrator
   return (
     <div className="space-y-5 text-slate-800">
       {/* Kartu Panduan PWA di Bagian Paling Atas */}
@@ -557,84 +660,8 @@ export const ConnectionPage: React.FC<ConnectionPageProps> = ({
           </div>
 
           {/* 2. Audio Alarm Peringatan Suhu Kritis */}
-          <div className="bg-white/65 sm:bg-white/70 backdrop-blur-md border border-white/80 rounded-2xl p-4 sm:p-5 flex items-center justify-between gap-3 shadow-xs">
-            <div className="flex items-center gap-3 min-w-0">
-              <button
-                type="button"
-                onClick={onToggleAlarmSound}
-                className={`p-2.5 rounded-xl border transition-colors cursor-pointer shrink-0 ${
-                  alarmSoundEnabled
-                    ? 'bg-amber-500/15 text-amber-800 border-amber-300/80'
-                    : 'bg-white/60 text-slate-400 border-white/80'
-                }`}
-                title={alarmSoundEnabled ? 'Alarm Suara Aktif' : 'Alarm Suara Senyap'}
-              >
-                {alarmSoundEnabled ? (
-                  <Volume2 className="w-5 h-5 text-amber-600" />
-                ) : (
-                  <VolumeX className="w-5 h-5 text-slate-400" />
-                )}
-              </button>
+          {renderAudioAlarmCard()}
 
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <h4 className="text-xs font-bold text-slate-900 truncate">
-                    Suara Alarm Peringatan Suhu
-                  </h4>
-                  <button
-                    ref={alarmInfoBtnRef}
-                    type="button"
-                    onClick={() => setShowAlarmInfo((prev) => !prev)}
-                    title="Informasi Alarm"
-                    className="text-slate-400 hover:text-slate-700 p-0.5 cursor-pointer"
-                  >
-                    <Info className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                <p className="text-[11px] text-slate-500 truncate">
-                  {alarmSoundEnabled
-                    ? `Aktif • Berbunyi jika suhu ≥ ${thresholds.tempCritical}°C`
-                    : 'Alarm suara saat ini dimatikan (Senyap)'}
-                </p>
-              </div>
-            </div>
-
-            <FloatingAnchorBox
-              isOpen={showAlarmInfo}
-              onClose={() => setShowAlarmInfo(false)}
-              anchorEl={alarmInfoBtnRef.current}
-              maxWidth={275}
-            >
-              <div className="space-y-2 text-xs text-slate-800">
-                <div className="flex items-center justify-between pb-1.5 border-b border-slate-100 font-bold">
-                  <span>Alarm Suhu Kritis</span>
-                  <button
-                    type="button"
-                    onClick={() => setShowAlarmInfo(false)}
-                    className="text-slate-400 hover:text-slate-700 p-0.5 cursor-pointer"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                <p className="text-[11px] text-slate-600 leading-relaxed">
-                  Menghasilkan nada sirine darurat otomatis melalui browser jika pembacaan suhu melewati ambang batas kritis (≥{thresholds.tempCritical}°C).
-                </p>
-              </div>
-            </FloatingAnchorBox>
-
-            <div className="flex items-center gap-2 shrink-0">
-              {onTestAlarmSound && (
-                <button
-                  type="button"
-                  onClick={onTestAlarmSound}
-                  title="Uji coba nada suara alarm"
-                  className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white/75 hover:bg-white text-slate-800 border border-white/85 shadow-2xs transition-colors cursor-pointer"
-                >
-                  Uji Suara
-                </button>
-              )}
-            </div>
-          </div>
 
           {/* 3. Kode Arduino ESP32 untuk Sensor Suhu */}
           {activeSketch && (
