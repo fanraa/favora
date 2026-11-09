@@ -2,7 +2,14 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   Trash2,
   MoreVertical,
-  RefreshCw
+  RefreshCw,
+  Loader2,
+  Check,
+  ArrowLeft,
+  Calendar,
+  Clock,
+  Database,
+  Info
 } from 'lucide-react';
 import { User } from 'firebase/auth';
 import {
@@ -20,8 +27,12 @@ import {
   exportSensorDataXlsx,
   exportSensorReportDoc,
   exportSensorDataCsv,
-  exportSensorDataJson
+  exportSensorDataJson,
+  ExportScopeMode
 } from '../utils/exportReports';
+import {
+  fetchAllSensorReadings
+} from '../services/sensorFirestoreService';
 
 interface DashboardViewProps {
   currentReading: SensorReading;
@@ -126,7 +137,84 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 }) => {
   const [chartRangePreset, setChartRangePreset] = useState<ChartRangePreset>('15_logs');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [selectedFormat, setSelectedFormat] = useState<'doc' | 'xlsx' | 'png' | 'csv' | 'json' | null>(null);
+  const [showScopeInfo, setShowScopeInfo] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportSuccessMsg, setExportSuccessMsg] = useState<string | null>(null);
   const menuBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  const handleExecuteExport = async (
+    format: 'doc' | 'xlsx' | 'png' | 'csv' | 'json',
+    scope: ExportScopeMode
+  ) => {
+    setIsExporting(true);
+    setExportSuccessMsg(null);
+    try {
+      let dataset = history;
+      if (scope === 'today_hourly' || scope === 'all_daily') {
+        try {
+          const fetched = await fetchAllSensorReadings({
+            timeScope: scope === 'today_hourly' ? 'today_hourly' : 'all_daily',
+            maxLimit: 3000
+          });
+          if (fetched && fetched.length > 0) {
+            dataset = fetched;
+          } else if (scope === 'today_hourly') {
+            const startOfToday = new Date();
+            startOfToday.setHours(0, 0, 0, 0);
+            const localFiltered = history.filter(
+              (r) => (r.epochMs ?? 0) >= startOfToday.getTime()
+            );
+            if (localFiltered.length > 0) {
+              dataset = localFiltered;
+            }
+          }
+        } catch (err) {
+          console.warn('Gagal mengambil data dari Firestore, memakai data lokal:', err);
+        }
+      }
+
+      if (dataset.length === 0) {
+        setExportSuccessMsg('Data kosong');
+        setTimeout(() => setExportSuccessMsg(null), 2500);
+        setIsExporting(false);
+        return;
+      }
+
+      const options = {
+        history: dataset,
+        thresholds,
+        scopeMode: scope,
+        rangePreset: 'all' as ChartRangePreset
+      };
+
+      if (format === 'doc') exportSensorReportDoc(options);
+      else if (format === 'xlsx') exportSensorDataXlsx(options);
+      else if (format === 'png') exportSensorChartPng(options);
+      else if (format === 'csv') exportSensorDataCsv(options);
+      else if (format === 'json') exportSensorDataJson(options);
+
+      const countMsg =
+        scope === 'today_hourly'
+          ? '24 Jam'
+          : scope === 'all_daily'
+          ? 'Rekap Harian'
+          : `${Math.min(60, dataset.length)} Log`;
+
+      setExportSuccessMsg(`Berhasil (${countMsg})`);
+      setTimeout(() => {
+        setExportSuccessMsg(null);
+        setMenuOpen(false);
+        setSelectedFormat(null);
+      }, 1300);
+    } catch (err) {
+      console.error('Export error:', err);
+      setExportSuccessMsg('Gagal ekspor');
+      setTimeout(() => setExportSuccessMsg(null), 2500);
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   const temp = currentReading.temperatureC;
 
@@ -399,164 +487,254 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
             <FloatingAnchorBox
               isOpen={menuOpen}
-              onClose={() => setMenuOpen(false)}
+              onClose={() => {
+                if (!isExporting) {
+                  setMenuOpen(false);
+                  setSelectedFormat(null);
+                }
+              }}
               anchorEl={menuBtnRef.current}
-              maxWidth={275}
+              maxWidth={300}
             >
-              <div className="space-y-1 text-slate-800">
-                <div className="px-1.5 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 mb-1">
-                  Format Unduh Riwayat
-                </div>
-
-                {/* 1. Unduh Word (.DOC) */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    exportSensorReportDoc({
-                      history,
-                      thresholds,
-                      rangePreset: chartRangePreset
-                    });
-                  }}
-                  className="flex items-center gap-2.5 w-full p-2 text-xs text-slate-700 hover:text-slate-900 hover:bg-amber-50/80 rounded-lg transition-colors cursor-pointer text-left group"
-                >
-                  <img
-                    src="https://cdn-icons-png.flaticon.com/128/2991/2991108.png"
-                    alt="Word DOC"
-                    className="w-5 h-5 object-contain shrink-0 group-hover:scale-110 transition-transform"
-                    draggable={false}
-                  />
-                  <div className="flex flex-col min-w-0 leading-tight">
-                    <span className="font-semibold text-slate-900">Dokumen Word (.doc)</span>
-                    <span className="text-[9.5px] text-slate-400 truncate">
-                      Laporan resmi + Grafik + Tabel
-                    </span>
+              {selectedFormat === null ? (
+                /* LANGKAH 1: PILIH FORMAT BERKAS */
+                <div className="space-y-1 text-slate-800">
+                  <div className="px-1.5 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 mb-1 flex items-center justify-between">
+                    <span>Pilih Format Berkas</span>
+                    <span className="text-[9px] font-normal text-slate-400">Langkah 1/2</span>
                   </div>
-                </button>
 
-                {/* 2. Unduh Excel (.XLSX) */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    exportSensorDataXlsx({
-                      history,
-                      thresholds,
-                      rangePreset: chartRangePreset
-                    });
-                  }}
-                  className="flex items-center gap-2.5 w-full p-2 text-xs text-slate-700 hover:text-slate-900 hover:bg-amber-50/80 rounded-lg transition-colors cursor-pointer text-left group"
-                >
-                  <img
-                    src="https://cdn-icons-png.flaticon.com/128/2504/2504768.png"
-                    alt="Excel XLSX"
-                    className="w-5 h-5 object-contain shrink-0 group-hover:scale-110 transition-transform"
-                    draggable={false}
-                  />
-                  <div className="flex flex-col min-w-0 leading-tight">
-                    <span className="font-semibold text-slate-900">Excel (.xlsx)</span>
-                    <span className="text-[9.5px] text-slate-400 truncate">
-                      Data riwayat & ringkasan statistik
-                    </span>
-                  </div>
-                </button>
-
-                {/* 3. Unduh Gambar Grafik (.PNG) */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    exportSensorChartPng({
-                      history,
-                      thresholds,
-                      rangePreset: chartRangePreset
-                    });
-                  }}
-                  className="flex items-center gap-2.5 w-full p-2 text-xs text-slate-700 hover:text-slate-900 hover:bg-amber-50/80 rounded-lg transition-colors cursor-pointer text-left group"
-                >
-                  <img
-                    src="https://cdn-icons-png.flaticon.com/128/337/337948.png"
-                    alt="Gambar PNG"
-                    className="w-5 h-5 object-contain shrink-0 group-hover:scale-110 transition-transform"
-                    draggable={false}
-                  />
-                  <div className="flex flex-col min-w-0 leading-tight">
-                    <span className="font-semibold text-slate-900">Gambar Grafik (.png)</span>
-                    <span className="text-[9.5px] text-slate-400 truncate">
-                      Visualisasi grafik resolusi tinggi
-                    </span>
-                  </div>
-                </button>
-
-                {/* 4. Unduh Data CSV (.CSV) */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    exportSensorDataCsv({
-                      history,
-                      thresholds,
-                      rangePreset: chartRangePreset
-                    });
-                  }}
-                  className="flex items-center gap-2.5 w-full p-2 text-xs text-slate-700 hover:text-slate-900 hover:bg-amber-50/80 rounded-lg transition-colors cursor-pointer text-left group"
-                >
-                  <img
-                    src="https://cdn-icons-png.flaticon.com/128/14422/14422338.png"
-                    alt="CSV"
-                    className="w-5 h-5 object-contain shrink-0 group-hover:scale-110 transition-transform"
-                    draggable={false}
-                  />
-                  <div className="flex flex-col min-w-0 leading-tight">
-                    <span className="font-semibold text-slate-900">Format Tabel (.csv)</span>
-                    <span className="text-[9.5px] text-slate-400 truncate">
-                      Tabel terpisah koma
-                    </span>
-                  </div>
-                </button>
-
-                {/* 5. Unduh Data JSON (.JSON) */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    exportSensorDataJson({
-                      history,
-                      thresholds,
-                      rangePreset: chartRangePreset
-                    });
-                  }}
-                  className="flex items-center gap-2.5 w-full p-2 text-xs text-slate-700 hover:text-slate-900 hover:bg-amber-50/80 rounded-lg transition-colors cursor-pointer text-left group"
-                >
-                  <img
-                    src="https://cdn-icons-png.flaticon.com/128/136/136525.png"
-                    alt="JSON"
-                    className="w-5 h-5 object-contain shrink-0 group-hover:scale-110 transition-transform"
-                    draggable={false}
-                  />
-                  <div className="flex flex-col min-w-0 leading-tight">
-                    <span className="font-semibold text-slate-900">Data Mentah (.json)</span>
-                    <span className="text-[9.5px] text-slate-400 truncate">
-                      Struktur JSON telemetri IoT
-                    </span>
-                  </div>
-                </button>
-
-                <div className="border-t border-slate-100 my-1 pt-1">
+                  {/* 1. Unduh Word (.DOC) */}
                   <button
                     type="button"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onClearHistory();
-                    }}
-                    className="flex items-center gap-2.5 w-full px-2 py-1.5 text-xs text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer text-left"
+                    onClick={() => setSelectedFormat('doc')}
+                    className="flex items-center gap-2.5 w-full p-2 text-xs text-slate-700 hover:text-slate-900 hover:bg-amber-50/80 rounded-md transition-colors cursor-pointer text-left group"
                   >
-                    <Trash2 className="w-4 h-4 text-rose-500 shrink-0" />
-                    <span className="font-medium">Hapus Riwayat</span>
+                    <img
+                      src="https://cdn-icons-png.flaticon.com/128/2991/2991108.png"
+                      alt="Word DOC"
+                      className="w-5 h-5 object-contain shrink-0 group-hover:scale-110 transition-transform"
+                      draggable={false}
+                    />
+                    <div className="flex flex-col min-w-0 leading-tight">
+                      <span className="font-semibold text-slate-900">Dokumen Word (.doc)</span>
+                      <span className="text-[9.5px] text-slate-400 truncate">
+                        Laporan resmi + Grafik + Tabel
+                      </span>
+                    </div>
                   </button>
+
+                  {/* 2. Unduh Excel (.XLSX) */}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFormat('xlsx')}
+                    className="flex items-center gap-2.5 w-full p-2 text-xs text-slate-700 hover:text-slate-900 hover:bg-amber-50/80 rounded-md transition-colors cursor-pointer text-left group"
+                  >
+                    <img
+                      src="https://cdn-icons-png.flaticon.com/128/2504/2504768.png"
+                      alt="Excel XLSX"
+                      className="w-5 h-5 object-contain shrink-0 group-hover:scale-110 transition-transform"
+                      draggable={false}
+                    />
+                    <div className="flex flex-col min-w-0 leading-tight">
+                      <span className="font-semibold text-slate-900">Excel (.xlsx)</span>
+                      <span className="text-[9.5px] text-slate-400 truncate">
+                        Data riwayat & ringkasan statistik
+                      </span>
+                    </div>
+                  </button>
+
+                  {/* 3. Unduh Gambar Grafik (.PNG) */}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFormat('png')}
+                    className="flex items-center gap-2.5 w-full p-2 text-xs text-slate-700 hover:text-slate-900 hover:bg-amber-50/80 rounded-md transition-colors cursor-pointer text-left group"
+                  >
+                    <img
+                      src="https://cdn-icons-png.flaticon.com/128/337/337948.png"
+                      alt="Gambar PNG"
+                      className="w-5 h-5 object-contain shrink-0 group-hover:scale-110 transition-transform"
+                      draggable={false}
+                    />
+                    <div className="flex flex-col min-w-0 leading-tight">
+                      <span className="font-semibold text-slate-900">Gambar Grafik (.png)</span>
+                      <span className="text-[9.5px] text-slate-400 truncate">
+                        Visualisasi grafik resolusi tinggi
+                      </span>
+                    </div>
+                  </button>
+
+                  {/* 4. Unduh Data CSV (.CSV) */}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFormat('csv')}
+                    className="flex items-center gap-2.5 w-full p-2 text-xs text-slate-700 hover:text-slate-900 hover:bg-amber-50/80 rounded-md transition-colors cursor-pointer text-left group"
+                  >
+                    <img
+                      src="https://cdn-icons-png.flaticon.com/128/14422/14422338.png"
+                      alt="CSV"
+                      className="w-5 h-5 object-contain shrink-0 group-hover:scale-110 transition-transform"
+                      draggable={false}
+                    />
+                    <div className="flex flex-col min-w-0 leading-tight">
+                      <span className="font-semibold text-slate-900">Format Tabel (.csv)</span>
+                      <span className="text-[9.5px] text-slate-400 truncate">
+                        Tabel terpisah koma
+                      </span>
+                    </div>
+                  </button>
+
+                  {/* 5. Unduh Data JSON (.JSON) */}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFormat('json')}
+                    className="flex items-center gap-2.5 w-full p-2 text-xs text-slate-700 hover:text-slate-900 hover:bg-amber-50/80 rounded-md transition-colors cursor-pointer text-left group"
+                  >
+                    <img
+                      src="https://cdn-icons-png.flaticon.com/128/136/136525.png"
+                      alt="JSON"
+                      className="w-5 h-5 object-contain shrink-0 group-hover:scale-110 transition-transform"
+                      draggable={false}
+                    />
+                    <div className="flex flex-col min-w-0 leading-tight">
+                      <span className="font-semibold text-slate-900">Data Mentah (.json)</span>
+                      <span className="text-[9.5px] text-slate-400 truncate">
+                        Struktur JSON telemetri IoT
+                      </span>
+                    </div>
+                  </button>
+
                 </div>
-              </div>
+              ) : (
+                /* LANGKAH 2: PILIH JANGKAUAN DATA */
+                <div className="space-y-2 text-slate-800">
+                  {/* Header dengan Tombol Kembali */}
+                  <div className="flex items-center justify-between pb-1.5 border-b border-slate-100">
+                    <button
+                      type="button"
+                      disabled={isExporting}
+                      onClick={() => {
+                        setSelectedFormat(null);
+                        setShowScopeInfo(false);
+                      }}
+                      className="flex items-center gap-1 text-[11px] font-semibold text-slate-600 hover:text-slate-900 cursor-pointer p-0.5 rounded hover:bg-slate-100 transition-colors disabled:opacity-50"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5" />
+                      <span>Kembali</span>
+                    </button>
+                    <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wider">
+                      {selectedFormat === 'doc' && 'Word (.doc)'}
+                      {selectedFormat === 'xlsx' && 'Excel (.xlsx)'}
+                      {selectedFormat === 'png' && 'Grafik (.png)'}
+                      {selectedFormat === 'csv' && 'Tabel (.csv)'}
+                      {selectedFormat === 'json' && 'Data (.json)'}
+                    </span>
+                  </div>
+
+                  {/* Judul & Tombol Info Ringkas */}
+                  <div className="flex items-center justify-between px-1 pt-0.5">
+                    <span className="text-[11px] font-bold text-slate-800">Pilih Jangkauan Data:</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowScopeInfo((prev) => !prev)}
+                      title="Penjelasan jangkauan data"
+                      aria-label="Info jangkauan data"
+                      className={`p-1 rounded transition-colors cursor-pointer ${
+                        showScopeInfo ? 'text-amber-600 bg-amber-50' : 'text-slate-400 hover:text-slate-700'
+                      }`}
+                    >
+                      <Info className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  {/* Penjelasan Detail (Hanya muncul jika ikon info diklik) */}
+                  {showScopeInfo && (
+                    <div className="p-2 bg-slate-50 border border-slate-200/80 rounded-md text-[10.5px] text-slate-600 space-y-1.5 leading-relaxed">
+                      <div>
+                        <strong className="text-slate-800">• 60 Log Terkini:</strong> Data mentah sesi aktif dasbor (cepat & 0 kuota).
+                      </div>
+                      <div>
+                        <strong className="text-slate-800">• Hari Ini (24 Jam):</strong> Rangkuman per jam hari ini dengan rata-rata, suhu min & max.
+                      </div>
+                      <div>
+                        <strong className="text-slate-800">• Semua Riwayat:</strong> Rekapitulasi per tanggal dari awal (sangat hemat kuota).
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Status Indicator */}
+                  {isExporting && (
+                    <div className="p-2 bg-amber-50 rounded-md border border-amber-200/60 flex items-center gap-2 text-xs text-amber-700 animate-pulse">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0 text-amber-600" />
+                      <span className="font-medium text-[11px]">Mengambil & mengolah data...</span>
+                    </div>
+                  )}
+
+                  {exportSuccessMsg && (
+                    <div className="p-2 bg-emerald-50 rounded-md border border-emerald-200/60 flex items-center gap-2 text-xs text-emerald-700">
+                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <span className="font-semibold text-[11px]">{exportSuccessMsg}</span>
+                    </div>
+                  )}
+
+                  {/* 3 Pilihan Jangkauan (Simple, Clean, Elegan) */}
+                  <div className="space-y-1.5 pt-0.5">
+                    {/* Pilihan 1: 60 Terkini */}
+                    <button
+                      type="button"
+                      disabled={isExporting}
+                      onClick={() => handleExecuteExport(selectedFormat, 'session_60')}
+                      className="flex items-center justify-between w-full p-2.5 rounded-md border border-slate-200/80 hover:border-amber-400 hover:bg-amber-50/60 transition-all text-left cursor-pointer group disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Clock className="w-4 h-4 text-slate-400 group-hover:text-amber-600 shrink-0" />
+                        <span className="text-xs font-semibold text-slate-800 group-hover:text-amber-900">
+                          60 Log Terkini
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-400 group-hover:text-amber-700 font-medium">
+                        Sesi Aktif
+                      </span>
+                    </button>
+
+                    {/* Pilihan 2: Hari Ini (Per Jam) */}
+                    <button
+                      type="button"
+                      disabled={isExporting}
+                      onClick={() => handleExecuteExport(selectedFormat, 'today_hourly')}
+                      className="flex items-center justify-between w-full p-2.5 rounded-md border border-slate-200/80 hover:border-amber-400 hover:bg-amber-50/60 transition-all text-left cursor-pointer group disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Calendar className="w-4 h-4 text-slate-400 group-hover:text-amber-600 shrink-0" />
+                        <span className="text-xs font-semibold text-slate-800 group-hover:text-amber-900">
+                          Hari Ini (24 Jam)
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-400 group-hover:text-amber-700 font-medium">
+                        Per Jam • 24 Log
+                      </span>
+                    </button>
+
+                    {/* Pilihan 3: Semua Riwayat */}
+                    <button
+                      type="button"
+                      disabled={isExporting}
+                      onClick={() => handleExecuteExport(selectedFormat, 'all_daily')}
+                      className="flex items-center justify-between w-full p-2.5 rounded-md border border-slate-200/80 hover:border-amber-400 hover:bg-amber-50/60 transition-all text-left cursor-pointer group disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      <div className="flex items-center gap-2">
+                        <Database className="w-4 h-4 text-slate-400 group-hover:text-amber-600 shrink-0" />
+                        <span className="text-xs font-semibold text-slate-800 group-hover:text-amber-900">
+                          Semua Riwayat
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-slate-400 group-hover:text-amber-700 font-medium">
+                        Rekap Harian
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </FloatingAnchorBox>
           </div>
         </div>

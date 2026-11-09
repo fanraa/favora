@@ -158,11 +158,13 @@ export function exportSensorChartPng(options: ExportChartOptions): void {
   const originX = padL;
   const originY = padT;
 
-  const minV = Math.min(...tempValues, tempOptMin);
-  const maxV = Math.max(...tempValues, tempOptMax);
-  const span = Math.max(4.0, maxV - minV);
-  const yMin = Math.max(0, Math.floor(minV - span * 0.22));
-  const yMax = Math.ceil(maxV + span * 0.22);
+  const tMinData = Math.min(...tempValues);
+  const tMaxData = Math.max(...tempValues);
+  const rawSpan = tMaxData - tMinData;
+  const span = Math.max(3.0, rawSpan);
+  const pad = Math.max(0.8, span * 0.16);
+  const yMin = Math.max(0, Number((tMinData - pad).toFixed(1)));
+  const yMax = Number((tMaxData + pad).toFixed(1));
 
   const getX = (idx: number) =>
     tempValues.length <= 1
@@ -174,24 +176,35 @@ export function exportSensorChartPng(options: ExportChartOptions): void {
   };
 
   // Zona Optimal Suhu
-  const optTop = getY(tempOptMax);
-  const optBot = getY(tempOptMin);
-  ctx.fillStyle = 'rgba(16, 185, 129, 0.08)';
-  ctx.fillRect(originX, optTop, pW, Math.max(2, optBot - optTop));
+  if (tempOptMin <= yMax && tempOptMax >= yMin) {
+    const optTop = Math.max(originY, getY(tempOptMax));
+    const optBot = Math.min(originY + pH, getY(tempOptMin));
+    ctx.fillStyle = 'rgba(16, 185, 129, 0.06)';
+    ctx.fillRect(originX, optTop, pW, Math.max(0, optBot - optTop));
+  }
 
   ctx.save();
   ctx.setLineDash([5, 5]);
   ctx.strokeStyle = 'rgba(16, 185, 129, 0.5)';
-  ctx.beginPath();
-  ctx.moveTo(originX, optTop);
-  ctx.lineTo(originX + pW, optTop);
-  ctx.moveTo(originX, optBot);
-  ctx.lineTo(originX + pW, optBot);
-  ctx.stroke();
+  if (tempOptMax >= yMin && tempOptMax <= yMax) {
+    const optTop = getY(tempOptMax);
+    ctx.beginPath();
+    ctx.moveTo(originX, optTop);
+    ctx.lineTo(originX + pW, optTop);
+    ctx.stroke();
+  }
+  if (tempOptMin >= yMin && tempOptMin <= yMax) {
+    const optBot = getY(tempOptMin);
+    ctx.beginPath();
+    ctx.moveTo(originX, optBot);
+    ctx.lineTo(originX + pW, optBot);
+    ctx.stroke();
+  }
   ctx.restore();
 
   // Grid Horizontal
   const ticks = [0, 0.25, 0.5, 0.75, 1];
+  const diffRange = yMax - yMin;
   ticks.forEach((t) => {
     const gy = originY + t * pH;
     const gVal = yMax - t * (yMax - yMin);
@@ -204,7 +217,8 @@ export function exportSensorChartPng(options: ExportChartOptions): void {
     ctx.textAlign = 'right';
     ctx.fillStyle = '#64748b';
     ctx.font = '12px "JetBrains Mono", monospace';
-    ctx.fillText(`${gVal.toFixed(0)} °C`, originX - 12, gy + 4);
+    const formatted = diffRange < 12 ? gVal.toFixed(1) : gVal.toFixed(0);
+    ctx.fillText(`${formatted} °C`, originX - 12, gy + 4);
     ctx.textAlign = 'left';
   });
 

@@ -232,6 +232,91 @@ export async function fetchLatestSensorReadingsOnce(): Promise<SensorReading[]> 
   }
 }
 
+export type SensorExportScope = 'session_60' | 'today' | 'today_hourly' | 'all' | 'all_daily';
+
+export interface FetchAllSensorReadingsOptions {
+  timeScope?: SensorExportScope;
+  maxLimit?: number;
+  limitCount?: number;
+}
+
+/**
+ * Mengambil data riwayat lengkap dari Firestore untuk keperluan ekspor laporan
+ * (Bisa ditarik seluruhnya dari awal, khusus hari ini, atau 60 data sesi terkini)
+ */
+export async function fetchAllSensorReadings(
+  options?: FetchAllSensorReadingsOptions
+): Promise<SensorReading[]> {
+  try {
+    const isToday =
+      options?.timeScope === 'today' || options?.timeScope === 'today_hourly';
+    const limitNum =
+      options?.timeScope === 'session_60'
+        ? 60
+        : isToday
+        ? 2000
+        : options?.maxLimit || options?.limitCount || 3000;
+
+    const q = query(
+      collection(db, COLLECTION_NAME),
+      orderBy('timestamp', 'desc'),
+      limit(limitNum)
+    );
+    const snapshot = await getDocs(q);
+    const readingsWithTime: { reading: SensorReading; epochMs: number }[] = [];
+
+    const now = new Date();
+    const startOfToday = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate()
+    ).getTime();
+
+    snapshot.forEach((docSnap) => {
+      const data = docSnap.data() as FirestoreSensorReadingDoc;
+      const temp = typeof data.temperature === 'number' ? data.temperature : 0;
+      const presKpa = typeof data.pressure_kpa === 'number' ? data.pressure_kpa : 0;
+      const presBar =
+        typeof data.pressure_bar === 'number'
+          ? data.pressure_bar
+          : Number((presKpa / 100).toFixed(4));
+      const presPsi =
+        typeof data.pressure_psi === 'number'
+          ? data.pressure_psi
+          : Number((presKpa * 0.145038).toFixed(3));
+      const rawPres =
+        typeof data.raw_pressure === 'number' ? data.raw_pressure : 0;
+
+      const epochMs = getFirestoreMillis(data.timestamp);
+
+      // Filter jika scope adalah hari ini
+      if (isToday && epochMs < startOfToday) {
+        return;
+      }
+
+      readingsWithTime.push({
+        epochMs,
+        reading: {
+          id: docSnap.id,
+          timestamp: formatFirestoreTimestamp(data.timestamp),
+          temperatureC: Number(temp.toFixed(1)),
+          pressureKpa: Number(presKpa.toFixed(1)),
+          pressureBar: presBar,
+          pressurePsi: presPsi,
+          rawPressure: rawPres,
+          source: 'cloud_hotspot',
+          epochMs
+        }
+      });
+    });
+
+    readingsWithTime.sort((a, b) => b.epochMs - a.epochMs);
+    return readingsWithTime.map((item) => item.reading);
+  } catch (error) {
+    throw handleFirestoreError(error, OperationType.LIST, COLLECTION_NAME);
+  }
+}
+
 /**
  * Mengirim data pembacaan sensor ke Firestore (misal dari uji live atau emulator ESP32)
  * Data divalidasi ketat agar sesuai dengan skema firebase-blueprint.json & firestore.rules

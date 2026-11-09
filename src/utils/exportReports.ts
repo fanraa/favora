@@ -2,15 +2,122 @@ import * as XLSX from 'xlsx';
 import { SensorReading, ThresholdConfig } from '../types/biogas';
 import { ChartRangePreset, RANGE_OPTIONS } from '../components/SensorHistoryChart';
 
+export type ExportScopeMode = 'session_60' | 'today_hourly' | 'all_daily';
+
 export interface ExportReportOptions {
   history: SensorReading[];
   thresholds: ThresholdConfig;
-  rangePreset: ChartRangePreset;
+  rangePreset?: ChartRangePreset;
+  scopeMode?: ExportScopeMode;
   titlePrefix?: string;
 }
 
+export interface ProcessedReportRow {
+  index: number;
+  dayName: string;
+  dateStr: string;
+  timeRange: string;
+  fullDateLabel: string;
+  temp: number; // Rata-rata atau suhu riil
+  minTemp: number;
+  maxTemp: number;
+  sampleCount: number;
+  status: 'Optimal' | 'Tinggi' | 'Kritis' | 'Rendah';
+  epochMs: number;
+}
+
+export interface ProcessedReportData {
+  rows: ProcessedReportRow[];
+  overallAvg: number;
+  overallMin: number;
+  overallMax: number;
+  totalSamples: number;
+  scopeLabel: string;
+  scopeDesc: string;
+  dateSummary: string;
+  startTimeLabel: string;
+  endTimeLabel: string;
+}
+
+const INDO_DAYS = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+const INDO_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+const INDO_MONTHS_LONG = [
+  'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+  'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+];
+
 /**
- * Filter data sensor sesuai dengan preset rentang waktu
+ * Parsing tanggal pembacaan sensor secara andal (mendukung epochMs atau ISO timestamp)
+ */
+export function parseReadingDate(reading: SensorReading): Date {
+  if (reading.epochMs && reading.epochMs > 0) {
+    const d = new Date(reading.epochMs);
+    if (!isNaN(d.getTime())) return d;
+  }
+  const timeMatch = String(reading.timestamp).match(/(\d{1,2}):(\d{2})(?::(\d{2}))?/);
+  const now = new Date();
+  if (timeMatch) {
+    const h = parseInt(timeMatch[1], 10);
+    const m = parseInt(timeMatch[2], 10);
+    const s = timeMatch[3] ? parseInt(timeMatch[3], 10) : 0;
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, s);
+  }
+  const parsed = new Date(reading.timestamp);
+  return !isNaN(parsed.getTime()) ? parsed : now;
+}
+
+/**
+ * Format tanggal dan waktu dalam Bahasa Indonesia yang lengkap dan mudah dibaca
+ */
+export function formatFullIndoDateTime(d: Date): {
+  dayName: string;
+  dateShort: string;
+  dateLong: string;
+  timeStr: string;
+  fullShort: string;
+  fullLong: string;
+  hourStr: string;
+  dateKey: string;
+} {
+  const dayName = INDO_DAYS[d.getDay()] || 'Senin';
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mmShort = INDO_MONTHS[d.getMonth()] || 'Nov';
+  const mmLong = INDO_MONTHS_LONG[d.getMonth()] || 'November';
+  const yyyy = d.getFullYear();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const min = String(d.getMinutes()).padStart(2, '0');
+  const sec = String(d.getSeconds()).padStart(2, '0');
+
+  const dateShort = `${dd} ${mmShort} ${yyyy}`;
+  const dateLong = `${dd} ${mmLong} ${yyyy}`;
+  const timeStr = `${hh}:${min}:${sec} WIB`;
+  const hourStr = `${hh}:00 WIB`;
+  const dateKey = `${yyyy}-${String(d.getMonth() + 1).padStart(2, '0')}-${dd}`;
+
+  return {
+    dayName,
+    dateShort,
+    dateLong,
+    timeStr,
+    fullShort: `${dayName}, ${dateShort} • ${timeStr}`,
+    fullLong: `${dayName}, ${dateLong} pukul ${timeStr}`,
+    hourStr,
+    dateKey
+  };
+}
+
+function calculateStatus(
+  temp: number,
+  thresholds: ThresholdConfig
+): 'Optimal' | 'Tinggi' | 'Kritis' | 'Rendah' {
+  if (temp >= thresholds.tempCritical) return 'Kritis';
+  if (temp > thresholds.tempMaxOptimal) return 'Tinggi';
+  if (temp < thresholds.tempMinOptimal) return 'Rendah';
+  return 'Optimal';
+}
+
+/**
+ * Filter data sensor sesuai dengan preset rentang waktu (kompatibilitas grafik)
  */
 export function filterReadingsByRange(
   history: SensorReading[],
@@ -40,8 +147,215 @@ export function filterReadingsByRange(
     filtered = valid;
   }
 
-  // Balik urutan agar kronologis dari yang terlama ke terbaru untuk grafik dan tabel runtut
   return [...filtered].reverse();
+}
+
+/**
+ * Memproses dan mengelompokkan data sensor sesuai jangkauan yang dipilih:
+ * - 'session_60': 60 data mentah sesi aktif (lengkap tanggal & jam)
+ * - 'today_hourly': Agregasi 24 jam hari ini (per jam dengan rata-rata, min & max)
+ * - 'all_daily': Agregasi per tanggal / hari dari seluruh riwayat Firestore
+ */
+export function processReadingsForReport(
+  history: SensorReading[],
+  thresholds: ThresholdConfig,
+  scopeMode: ExportScopeMode = 'session_60',
+  rangePreset: ChartRangePreset = 'all'
+): ProcessedReportData {
+  const valid = history.filter(
+    (r) => r.temperatureC !== undefined && Number.isFinite(r.temperatureC)
+  );
+
+  const now = new Date();
+  const todayIndo = formatFullIndoDateTime(now);
+
+  if (valid.length === 0) {
+    return {
+      rows: [],
+      overallAvg: 0,
+      overallMin: 0,
+      overallMax: 0,
+      totalSamples: 0,
+      scopeLabel: 'Tidak Ada Data',
+      scopeDesc: 'Belum ada data rekaman sensor',
+      dateSummary: todayIndo.fullLong,
+      startTimeLabel: '-',
+      endTimeLabel: '-'
+    };
+  }
+
+  // 1. MODE: HARI INI (AGREGASI PER JAM • 24 LOG)
+  if (scopeMode === 'today_hourly') {
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    let todayData = valid.filter((r) => {
+      const d = parseReadingDate(r);
+      return d.getTime() >= startOfToday;
+    });
+
+    // Jika belum ada data khusus hari ini (misal offline/baru nyala), gunakan data terbaru yang ada
+    if (todayData.length === 0) {
+      todayData = valid.slice(0, 300);
+    }
+
+    // Kelompokkan per jam (0..23)
+    const buckets: { [hour: number]: { temps: number[]; readings: SensorReading[] } } = {};
+    todayData.forEach((r) => {
+      const d = parseReadingDate(r);
+      const h = d.getHours();
+      if (!buckets[h]) buckets[h] = { temps: [], readings: [] };
+      buckets[h].temps.push(r.temperatureC);
+      buckets[h].readings.push(r);
+    });
+
+    const rows: ProcessedReportRow[] = [];
+    const sortedHours = Object.keys(buckets)
+      .map(Number)
+      .sort((a, b) => a - b);
+
+    sortedHours.forEach((h, idx) => {
+      const b = buckets[h];
+      const count = b.temps.length;
+      const sum = b.temps.reduce((acc, v) => acc + v, 0);
+      const avg = Number((sum / count).toFixed(2));
+      const min = Math.min(...b.temps);
+      const max = Math.max(...b.temps);
+      const sampleD = parseReadingDate(b.readings[0]);
+      const indo = formatFullIndoDateTime(sampleD);
+
+      const hNext = (h + 1) % 24;
+      const rangeStr = `Jam ${String(h).padStart(2, '0')}:00 – ${String(hNext).padStart(2, '0')}:00 WIB`;
+
+      rows.push({
+        index: idx + 1,
+        dayName: indo.dayName,
+        dateStr: indo.dateShort,
+        timeRange: rangeStr,
+        fullDateLabel: `${indo.dayName}, ${indo.dateShort} (${rangeStr})`,
+        temp: avg,
+        minTemp: Number(min.toFixed(2)),
+        maxTemp: Number(max.toFixed(2)),
+        sampleCount: count,
+        status: calculateStatus(avg, thresholds),
+        epochMs: sampleD.getTime()
+      });
+    });
+
+    const allTemps = todayData.map((r) => r.temperatureC);
+    const overallAvg = allTemps.reduce((a, b) => a + b, 0) / Math.max(1, allTemps.length);
+    const overallMin = Math.min(...allTemps);
+    const overallMax = Math.max(...allTemps);
+
+    return {
+      rows,
+      overallAvg: Number(overallAvg.toFixed(2)),
+      overallMin: Number(overallMin.toFixed(2)),
+      overallMax: Number(overallMax.toFixed(2)),
+      totalSamples: todayData.length,
+      scopeLabel: 'Hari Ini (Per Jam • 24 Log)',
+      scopeDesc: `Rangkuman 24 jam hari ini (${rows.length} blok jam tercatat • ${todayData.length} sampel)`,
+      dateSummary: `${todayIndo.dayName}, ${todayIndo.dateLong}`,
+      startTimeLabel: rows[0]?.timeRange || '-',
+      endTimeLabel: rows[rows.length - 1]?.timeRange || '-'
+    };
+  }
+
+  // 2. MODE: SEMUA RIWAYAT (REKAP HARIAN)
+  if (scopeMode === 'all_daily') {
+    const dayBuckets: { [dateKey: string]: { temps: number[]; sampleDate: Date; readings: SensorReading[] } } = {};
+
+    valid.forEach((r) => {
+      const d = parseReadingDate(r);
+      const indo = formatFullIndoDateTime(d);
+      if (!dayBuckets[indo.dateKey]) {
+        dayBuckets[indo.dateKey] = { temps: [], sampleDate: d, readings: [] };
+      }
+      dayBuckets[indo.dateKey].temps.push(r.temperatureC);
+      dayBuckets[indo.dateKey].readings.push(r);
+    });
+
+    const rows: ProcessedReportRow[] = [];
+    const sortedKeys = Object.keys(dayBuckets).sort(); // Urutkan tanggal dari terlama ke terbaru
+
+    sortedKeys.forEach((key, idx) => {
+      const b = dayBuckets[key];
+      const count = b.temps.length;
+      const sum = b.temps.reduce((acc, v) => acc + v, 0);
+      const avg = Number((sum / count).toFixed(2));
+      const min = Math.min(...b.temps);
+      const max = Math.max(...b.temps);
+      const indo = formatFullIndoDateTime(b.sampleDate);
+
+      rows.push({
+        index: idx + 1,
+        dayName: indo.dayName,
+        dateStr: indo.dateShort,
+        timeRange: '24 Jam Penuh',
+        fullDateLabel: `${indo.dayName}, ${indo.dateShort}`,
+        temp: avg,
+        minTemp: Number(min.toFixed(2)),
+        maxTemp: Number(max.toFixed(2)),
+        sampleCount: count,
+        status: calculateStatus(avg, thresholds),
+        epochMs: b.sampleDate.getTime()
+      });
+    });
+
+    const allTemps = valid.map((r) => r.temperatureC);
+    const overallAvg = allTemps.reduce((a, b) => a + b, 0) / Math.max(1, allTemps.length);
+    const overallMin = Math.min(...allTemps);
+    const overallMax = Math.max(...allTemps);
+
+    return {
+      rows,
+      overallAvg: Number(overallAvg.toFixed(2)),
+      overallMin: Number(overallMin.toFixed(2)),
+      overallMax: Number(overallMax.toFixed(2)),
+      totalSamples: valid.length,
+      scopeLabel: 'Semua Riwayat (Rekap Harian)',
+      scopeDesc: `Rekapitulasi per hari dari awal (${rows.length} hari tercatat • ${valid.length} total sampel)`,
+      dateSummary: `${rows[0]?.dateStr || '-'} s/d ${rows[rows.length - 1]?.dateStr || '-'}`,
+      startTimeLabel: rows[0]?.fullDateLabel || '-',
+      endTimeLabel: rows[rows.length - 1]?.fullDateLabel || '-'
+    };
+  }
+
+  // 3. MODE: 60 LOG TERKINI (SESI AKTIF)
+  const chronological = filterReadingsByRange(valid, rangePreset);
+  const rows: ProcessedReportRow[] = chronological.map((r, idx) => {
+    const d = parseReadingDate(r);
+    const indo = formatFullIndoDateTime(d);
+    return {
+      index: idx + 1,
+      dayName: indo.dayName,
+      dateStr: indo.dateShort,
+      timeRange: indo.timeStr,
+      fullDateLabel: `${indo.dayName}, ${indo.dateShort} • ${indo.timeStr}`,
+      temp: Number(r.temperatureC.toFixed(2)),
+      minTemp: Number(r.temperatureC.toFixed(2)),
+      maxTemp: Number(r.temperatureC.toFixed(2)),
+      sampleCount: 1,
+      status: calculateStatus(r.temperatureC, thresholds),
+      epochMs: d.getTime()
+    };
+  });
+
+  const allTemps = chronological.map((r) => r.temperatureC);
+  const overallAvg = allTemps.reduce((a, b) => a + b, 0) / Math.max(1, allTemps.length);
+  const overallMin = Math.min(...allTemps);
+  const overallMax = Math.max(...allTemps);
+
+  return {
+    rows,
+    overallAvg: Number(overallAvg.toFixed(2)),
+    overallMin: Number(overallMin.toFixed(2)),
+    overallMax: Number(overallMax.toFixed(2)),
+    totalSamples: chronological.length,
+    scopeLabel: '60 Log Terkini (Sesi Ini)',
+    scopeDesc: `60 titik data mentah terbaru dari sesi aktif dasbor`,
+    dateSummary: `${todayIndo.dayName}, ${todayIndo.dateLong}`,
+    startTimeLabel: rows[0]?.timeRange || '-',
+    endTimeLabel: rows[rows.length - 1]?.timeRange || '-'
+  };
 }
 
 /**
@@ -62,19 +376,12 @@ function triggerBlobDownload(blob: Blob, filename: string): void {
  * Render visualisasi grafik suhu beresolusi tinggi ke canvas HTML5
  */
 export function renderSensorChartToCanvas(options: ExportReportOptions): HTMLCanvasElement | null {
-  const { history, thresholds, rangePreset } = options;
-  const dataPoints = filterReadingsByRange(history, rangePreset);
-  if (dataPoints.length === 0) return null;
+  const { history, thresholds, scopeMode = 'session_60', rangePreset = 'all' } = options;
+  const processed = processReadingsForReport(history, thresholds, scopeMode, rangePreset);
+  const { rows, overallAvg, overallMin, overallMax } = processed;
+  if (rows.length === 0) return null;
 
-  const rangeObj =
-    RANGE_OPTIONS.find((r) => r.id === rangePreset) || RANGE_OPTIONS[0];
-
-  const tempValues = dataPoints.map((d) => d.temperatureC);
-  const minTemp = Math.min(...tempValues);
-  const maxTemp = Math.max(...tempValues);
-  const avgTemp =
-    tempValues.reduce((a, b) => a + b, 0) / Math.max(1, tempValues.length);
-
+  const tempValues = rows.map((r) => r.temp);
   const tempOptMin = thresholds.tempMinOptimal;
   const tempOptMax = thresholds.tempMaxOptimal;
 
@@ -98,36 +405,28 @@ export function renderSensorChartToCanvas(options: ExportReportOptions): HTMLCan
   ctx.strokeRect(16, 16, W - 32, H - 32);
 
   // Header Laporan Grafik
-  const startTime = dataPoints[0]?.timestamp || '-';
-  const endTime = dataPoints[dataPoints.length - 1]?.timestamp || '-';
-  const dateStr = new Date().toLocaleDateString('id-ID', {
-    day: '2-digit',
-    month: 'long',
-    year: 'numeric'
-  });
-
   ctx.fillStyle = '#0f172a';
   ctx.font = 'bold 24px "Plus Jakarta Sans", sans-serif';
   ctx.fillText('PAVORA — Grafik Monitoring Suhu Inframerah', 48, 64);
 
   ctx.fillStyle = '#64748b';
-  ctx.font = '500 14px "Plus Jakarta Sans", sans-serif';
+  ctx.font = '500 13px "Plus Jakarta Sans", sans-serif';
   ctx.fillText(
-    `Sistem Pemantauan Suhu Realtime IoT • Sensor GY-906 (MLX90614) • Tanggal: ${dateStr}`,
+    `Sistem IoT Sensor GY-906 (MLX90614) • Jangkauan: ${processed.scopeLabel} • ${processed.dateSummary}`,
     48,
     92
   );
 
-  // Badge Info Rentang di Kanan Atas
+  // Badge Info di Kanan Atas
   ctx.textAlign = 'right';
   ctx.fillStyle = '#d97706';
-  ctx.font = 'bold 14px "JetBrains Mono", monospace';
-  ctx.fillText(`SENSOR SUHU INFRAMERAH (°C)`, W - 48, 62);
+  ctx.font = 'bold 13px "JetBrains Mono", monospace';
+  ctx.fillText(`SENSOR SUHU (°C)`, W - 48, 62);
 
   ctx.fillStyle = '#475569';
-  ctx.font = '13px "JetBrains Mono", monospace';
+  ctx.font = '12px "JetBrains Mono", monospace';
   ctx.fillText(
-    `Rentang: ${rangeObj.label} (${dataPoints.length} Titik Data | ${startTime} – ${endTime} WIB)`,
+    `${rows.length} Titik Data | ${processed.startTimeLabel} – ${processed.endTimeLabel}`,
     W - 48,
     88
   );
@@ -158,7 +457,7 @@ export function renderSensorChartToCanvas(options: ExportReportOptions): HTMLCan
   ctx.fillStyle = '#1e293b';
   ctx.font = '13px "JetBrains Mono", monospace';
   ctx.fillText(
-    `Rata-rata: ${avgTemp.toFixed(1)}°C   |   Suhu Terendah: ${minTemp.toFixed(1)}°C   |   Suhu Tertinggi: ${maxTemp.toFixed(1)}°C   |   Rentang Optimal: ${tempOptMin}–${tempOptMax}°C`,
+    `Rata-rata: ${overallAvg.toFixed(2)}°C   |   Terendah: ${overallMin.toFixed(2)}°C   |   Tertinggi: ${overallMax.toFixed(2)}°C   |   Rentang Normal: ${tempOptMin}–${tempOptMax}°C   |   Kritis: ≥${thresholds.tempCritical}°C`,
     66,
     statY + 56
   );
@@ -173,11 +472,14 @@ export function renderSensorChartToCanvas(options: ExportReportOptions): HTMLCan
   const originX = padL;
   const originY = padT;
 
-  const minV = Math.min(...tempValues, tempOptMin);
-  const maxV = Math.max(...tempValues, tempOptMax);
-  const span = Math.max(4.0, maxV - minV);
-  const yMin = Math.max(0, Math.floor(minV - span * 0.22));
-  const yMax = Math.ceil(maxV + span * 0.22);
+  const tMinData = Math.min(...tempValues);
+  const tMaxData = Math.max(...tempValues);
+  const rawSpan = tMaxData - tMinData;
+  const span = Math.max(3.0, rawSpan);
+  const pad = Math.max(0.8, span * 0.16);
+
+  const yMin = Math.max(0, Number((tMinData - pad).toFixed(1)));
+  const yMax = Number((tMaxData + pad).toFixed(1));
 
   const getX = (idx: number) =>
     tempValues.length <= 1
@@ -188,25 +490,36 @@ export function renderSensorChartToCanvas(options: ExportReportOptions): HTMLCan
     return originY + pH - Math.min(1, Math.max(0, ratio)) * pH;
   };
 
-  // Zona Optimal Suhu
-  const optTop = getY(tempOptMax);
-  const optBot = getY(tempOptMin);
-  ctx.fillStyle = 'rgba(16, 185, 129, 0.08)';
-  ctx.fillRect(originX, optTop, pW, Math.max(2, optBot - optTop));
+  // Zona Optimal Suhu (Tampil lembut jika bersinggungan dengan rentang tampak)
+  if (tempOptMin <= yMax && tempOptMax >= yMin) {
+    const optTop = Math.max(originY, getY(tempOptMax));
+    const optBot = Math.min(originY + pH, getY(tempOptMin));
+    ctx.fillStyle = 'rgba(16, 185, 129, 0.06)';
+    ctx.fillRect(originX, optTop, pW, Math.max(0, optBot - optTop));
+  }
 
   ctx.save();
   ctx.setLineDash([5, 5]);
   ctx.strokeStyle = 'rgba(16, 185, 129, 0.5)';
-  ctx.beginPath();
-  ctx.moveTo(originX, optTop);
-  ctx.lineTo(originX + pW, optTop);
-  ctx.moveTo(originX, optBot);
-  ctx.lineTo(originX + pW, optBot);
-  ctx.stroke();
+  if (tempOptMax >= yMin && tempOptMax <= yMax) {
+    const optTop = getY(tempOptMax);
+    ctx.beginPath();
+    ctx.moveTo(originX, optTop);
+    ctx.lineTo(originX + pW, optTop);
+    ctx.stroke();
+  }
+  if (tempOptMin >= yMin && tempOptMin <= yMax) {
+    const optBot = getY(tempOptMin);
+    ctx.beginPath();
+    ctx.moveTo(originX, optBot);
+    ctx.lineTo(originX + pW, optBot);
+    ctx.stroke();
+  }
   ctx.restore();
 
   // Grid Horizontal
   const ticks = [0, 0.25, 0.5, 0.75, 1];
+  const diffRange = yMax - yMin;
   ticks.forEach((t) => {
     const gy = originY + t * pH;
     const gVal = yMax - t * (yMax - yMin);
@@ -219,7 +532,8 @@ export function renderSensorChartToCanvas(options: ExportReportOptions): HTMLCan
     ctx.textAlign = 'right';
     ctx.fillStyle = '#64748b';
     ctx.font = '12px "JetBrains Mono", monospace';
-    ctx.fillText(`${gVal.toFixed(0)} °C`, originX - 12, gy + 4);
+    const formatted = diffRange < 12 ? gVal.toFixed(1) : gVal.toFixed(0);
+    ctx.fillText(`${formatted} °C`, originX - 12, gy + 4);
     ctx.textAlign = 'left';
   });
 
@@ -290,28 +604,29 @@ export function renderSensorChartToCanvas(options: ExportReportOptions): HTMLCan
     }
   });
 
-  // Label Sumbu X (Waktu)
-  const xLabelCount = Math.min(6, dataPoints.length);
+  // Label Sumbu X (Waktu / Jam / Tanggal)
+  const xLabelCount = Math.min(8, rows.length);
   for (let i = 0; i < xLabelCount; i++) {
     const idx =
       xLabelCount === 1
         ? 0
-        : Math.round((i / (xLabelCount - 1)) * (dataPoints.length - 1));
+        : Math.round((i / (xLabelCount - 1)) * (rows.length - 1));
     const px = getX(idx);
-    ctx.textAlign =
-      i === 0 ? 'left' : i === xLabelCount - 1 ? 'right' : 'center';
-    ctx.fillStyle = '#64748b';
-    ctx.font = '12px "JetBrains Mono", monospace';
-    ctx.fillText(dataPoints[idx].timestamp, px, originY + pH + 28);
-  }
-  ctx.textAlign = 'left';
+    const row = rows[idx];
+    const lbl = scopeMode === 'all_daily' ? row.dateStr : (scopeMode === 'today_hourly' ? row.timeRange.replace('Jam ', '').replace(' WIB', '') : row.timeRange.replace(' WIB', ''));
 
-  // Footer Watermark
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#64748b';
+    ctx.font = '11px "JetBrains Mono", monospace';
+    ctx.fillText(lbl, px, originY + pH + 24);
+  }
+
+  // Footer Kanvas
   ctx.fillStyle = '#94a3b8';
   ctx.font = '12px "Plus Jakarta Sans", sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText(
-    'PAVORA — Sistem Pemantauan Suhu Inframerah Realtime',
+    'PAVORA — Sistem Pemantauan Suhu Inframerah Realtime Berbasis Cloud Firestore',
     W / 2,
     H - 28
   );
@@ -321,18 +636,24 @@ export function renderSensorChartToCanvas(options: ExportReportOptions): HTMLCan
 }
 
 /**
+ * Helper membuat nama file terstruktur dan seragam
+ */
+function generateExportFileName(scopeMode: ExportScopeMode, extension: string): string {
+  const isoDate = new Date().toISOString().slice(0, 10);
+  let scopeSlug = '60_Terkini';
+  if (scopeMode === 'today_hourly') scopeSlug = 'Hari_Ini_Per_Jam';
+  else if (scopeMode === 'all_daily') scopeSlug = 'Rekap_Harian';
+  return `PAVORA_Suhu_${scopeSlug}_${isoDate}.${extension}`;
+}
+
+/**
  * 1. UNDUH GRAFIK FORMAT PNG
  */
 export function exportSensorChartPng(options: ExportReportOptions): void {
   const canvas = renderSensorChartToCanvas(options);
   if (!canvas) return;
 
-  const rangeObj =
-    RANGE_OPTIONS.find((r) => r.id === options.rangePreset) || RANGE_OPTIONS[0];
-  const rangeSlug = rangeObj.shortLabel.replace(/\s+/g, '-');
-  const isoDate = new Date().toISOString().slice(0, 10);
-  const fileName = `PAVORA_Grafik_Suhu_${rangeSlug}_${isoDate}.png`;
-
+  const fileName = generateExportFileName(options.scopeMode || 'session_60', 'png');
   const dataUrl = canvas.toDataURL('image/png');
   const link = document.createElement('a');
   link.href = dataUrl;
@@ -343,112 +664,147 @@ export function exportSensorChartPng(options: ExportReportOptions): void {
 }
 
 /**
- * 2. UNDUH DATA & LOG FORMAT EXCEL (.XLSX)
+ * 2. UNDUH SPREADSHEET EXCEL (.XLSX) DENGAN REKAP HARIAN & PER JAM
  */
 export function exportSensorDataXlsx(options: ExportReportOptions): void {
-  const { history, thresholds, rangePreset } = options;
-  const dataPoints = filterReadingsByRange(history, rangePreset);
-  if (dataPoints.length === 0) return;
-
-  const tempValues = dataPoints.map((d) => d.temperatureC);
-  const minTemp = Math.min(...tempValues);
-  const maxTemp = Math.max(...tempValues);
-  const avgTemp = tempValues.reduce((a, b) => a + b, 0) / tempValues.length;
+  const { history, thresholds, scopeMode = 'session_60', rangePreset = 'all' } = options;
+  const processed = processReadingsForReport(history, thresholds, scopeMode, rangePreset);
+  const { rows, overallAvg, overallMin, overallMax, totalSamples } = processed;
+  if (rows.length === 0) return;
 
   const wb = XLSX.utils.book_new();
 
-  // SHEET 1: Data Riwayat Suhu
-  const rows: any[][] = [];
-  rows.push(['PAVORA — LAPORAN DATA MONITORING SUHU INFRAMERAH']);
-  rows.push([`Dibuat pada: ${new Date().toLocaleString('id-ID')} WIB`]);
-  rows.push([`Sensor: GY-906 (MLX90614) | Mikrokontroler: ESP32`]);
-  rows.push([]); // baris kosong
+  // SHEET 1: Data Pengukuran Suhu Lengkap
+  const sheetRows: any[][] = [];
+  sheetRows.push(['PAVORA — LAPORAN RESMI MONITORING SUHU INFRAMERAH']);
+  sheetRows.push([`Jangkauan: ${processed.scopeLabel} | Tanggal Ekspor: ${processed.dateSummary} WIB`]);
+  sheetRows.push([`Sensor: GY-906 (MLX90614) | Mikrokontroler: ESP32 Dev Module | Cloud: Firestore`]);
+  sheetRows.push([]); // baris kosong
 
-  // Header Kolom Tabel
-  rows.push([
-    'No',
-    'Waktu (WIB)',
-    'Suhu Objek (°C)',
-    'Status Kondisi',
-    'Ambang Min (°C)',
-    'Ambang Maks (°C)',
-    'Batas Kritis (°C)',
-    'Model Sensor'
-  ]);
-
-  dataPoints.forEach((r, idx) => {
-    let status = 'Optimal';
-    if (r.temperatureC >= thresholds.tempCritical) {
-      status = 'Kritis (Bahaya)';
-    } else if (r.temperatureC > thresholds.tempMaxOptimal) {
-      status = 'Tinggi di Atas Normal';
-    } else if (r.temperatureC < thresholds.tempMinOptimal) {
-      status = 'Rendah di Bawah Normal';
-    }
-
-    rows.push([
-      idx + 1,
-      r.timestamp,
-      Number(r.temperatureC.toFixed(2)),
-      status,
-      thresholds.tempMinOptimal,
-      thresholds.tempMaxOptimal,
-      thresholds.tempCritical,
-      'GY-906 (MLX90614)'
+  // Header Kolom Tabel Sesuai Mode
+  if (scopeMode === 'today_hourly') {
+    sheetRows.push([
+      'No',
+      'Hari',
+      'Tanggal',
+      'Rentang Waktu (Jam WIB)',
+      'Suhu Rata-rata (°C)',
+      'Suhu Terendah (°C)',
+      'Suhu Tertinggi (°C)',
+      'Status Kondisi',
+      'Jumlah Sampel',
+      'Model Sensor'
     ]);
-  });
+    rows.forEach((r) => {
+      sheetRows.push([
+        r.index,
+        r.dayName,
+        r.dateStr,
+        r.timeRange,
+        r.temp,
+        r.minTemp,
+        r.maxTemp,
+        r.status,
+        r.sampleCount,
+        'GY-906 (MLX90614)'
+      ]);
+    });
+  } else if (scopeMode === 'all_daily') {
+    sheetRows.push([
+      'No',
+      'Hari',
+      'Tanggal',
+      'Periode',
+      'Suhu Rata-rata (°C)',
+      'Suhu Minimum (°C)',
+      'Suhu Maksimum (°C)',
+      'Status Kondisi',
+      'Total Sampel Sensor',
+      'Model Sensor'
+    ]);
+    rows.forEach((r) => {
+      sheetRows.push([
+        r.index,
+        r.dayName,
+        r.dateStr,
+        r.timeRange,
+        r.temp,
+        r.minTemp,
+        r.maxTemp,
+        r.status,
+        r.sampleCount,
+        'GY-906 (MLX90614)'
+      ]);
+    });
+  } else {
+    sheetRows.push([
+      'No',
+      'Hari',
+      'Tanggal',
+      'Waktu (WIB)',
+      'Suhu Objek (°C)',
+      'Status Kondisi',
+      'Ambang Min (°C)',
+      'Ambang Maks (°C)',
+      'Batas Kritis (°C)',
+      'Model Sensor'
+    ]);
+    rows.forEach((r) => {
+      sheetRows.push([
+        r.index,
+        r.dayName,
+        r.dateStr,
+        r.timeRange,
+        r.temp,
+        r.status,
+        thresholds.tempMinOptimal,
+        thresholds.tempMaxOptimal,
+        thresholds.tempCritical,
+        'GY-906 (MLX90614)'
+      ]);
+    });
+  }
 
-  const wsData = XLSX.utils.aoa_to_sheet(rows);
-
-  // Auto lebar kolom
+  const wsData = XLSX.utils.aoa_to_sheet(sheetRows);
   wsData['!cols'] = [
     { wch: 6 },
+    { wch: 12 },
+    { wch: 16 },
+    { wch: 26 },
+    { wch: 20 },
+    { wch: 18 },
+    { wch: 18 },
     { wch: 18 },
     { wch: 16 },
-    { wch: 22 },
-    { wch: 16 },
-    { wch: 16 },
-    { wch: 16 },
-    { wch: 20 }
+    { wch: 22 }
   ];
+  XLSX.utils.book_append_sheet(wb, wsData, 'Data Pengukuran');
 
-  XLSX.utils.book_append_sheet(wb, wsData, 'Data Riwayat Suhu');
-
-  // SHEET 2: Ringkasan & Statistik
+  // SHEET 2: Ringkasan Statistik & Analisis
   const summaryRows: any[][] = [
-    ['PAVORA — RINGKASAN STATISTIK MONITORING'],
+    ['PAVORA — RINGKASAN STATISTIK & ANALISIS SUHU'],
     [],
     ['Parameter', 'Nilai', 'Satuan', 'Keterangan'],
-    ['Total Titik Data Terbaca', dataPoints.length, 'Data', 'Jumlah rekaman sampel sensor'],
-    ['Suhu Rata-rata', Number(avgTemp.toFixed(2)), '°C', 'Rerata selama periode ini'],
-    ['Suhu Terendah (Minimum)', Number(minTemp.toFixed(2)), '°C', 'Titik suhu paling rendah'],
-    ['Suhu Tertinggi (Maksimum)', Number(maxTemp.toFixed(2)), '°C', 'Titik suhu paling tinggi'],
-    ['Ambang Batas Suhu Bawah', thresholds.tempMinOptimal, '°C', 'Batas bawah kondisi normal'],
-    ['Ambang Batas Suhu Atas', thresholds.tempMaxOptimal, '°C', 'Batas atas kondisi normal'],
-    ['Batas Kritis Suhu', thresholds.tempCritical, '°C', 'Pemicu alarm peringatan sirine'],
-    ['Sensor Terpasang', 'GY-906 (MLX90614ESF)', '-', 'Termometer inframerah non-kontak I2C'],
-    ['Mikrokontroler', 'ESP32 Dev Module', '-', 'Transmisi realtime Cloud Firestore'],
-    ['Waktu Mulai Pengukuran', dataPoints[0]?.timestamp || '-', 'WIB', 'Titik awal rentang'],
-    ['Waktu Akhir Pengukuran', dataPoints[dataPoints.length - 1]?.timestamp || '-', 'WIB', 'Titik akhir rentang']
+    ['Mode Jangkauan Laporan', processed.scopeLabel, '-', processed.scopeDesc],
+    ['Tanggal & Periode Laporan', processed.dateSummary, 'WIB', 'Waktu pembuatan dokumen'],
+    ['Total Baris Data Laporan', rows.length, 'Baris', 'Jumlah data ringkasan dalam tabel'],
+    ['Total Sampel Mentah Sensor', totalSamples, 'Sampel', 'Total pembacaan dari sensor fisik'],
+    ['Suhu Rata-rata Keseluruhan', overallAvg, '°C', 'Rata-rata temperatur selama periode'],
+    ['Suhu Paling Rendah (Minimum)', overallMin, '°C', 'Titik temperatur terendah yang tercapai'],
+    ['Suhu Paling Tinggi (Maksimum)', overallMax, '°C', 'Titik temperatur tertinggi yang tercapai'],
+    ['Ambang Batas Suhu Normal', `${thresholds.tempMinOptimal} – ${thresholds.tempMaxOptimal}`, '°C', 'Rentang kondisi aman/optimal'],
+    ['Batas Kritis Suhu Darurat', thresholds.tempCritical, '°C', 'Ambang batas aktivasi sirine alarm'],
+    ['Sensor yang Digunakan', 'GY-906 (MLX90614ESF)', '-', 'Termometer inframerah non-kontak I2C'],
+    ['Mikrokontroler Pengirim', 'ESP32 Dev Module', '-', 'Transmisi realtime Firebase Firestore'],
+    ['Titik Awal Pengukuran', processed.startTimeLabel, '-', 'Awal rentang rekaman data'],
+    ['Titik Akhir Pengukuran', processed.endTimeLabel, '-', 'Akhir rentang rekaman data']
   ];
 
   const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
-  wsSummary['!cols'] = [
-    { wch: 28 },
-    { wch: 18 },
-    { wch: 12 },
-    { wch: 38 }
-  ];
-
+  wsSummary['!cols'] = [{ wch: 28 }, { wch: 22 }, { wch: 12 }, { wch: 44 }];
   XLSX.utils.book_append_sheet(wb, wsSummary, 'Ringkasan Statistik');
 
-  // Buat file binary & unduh
-  const rangeObj =
-    RANGE_OPTIONS.find((r) => r.id === rangePreset) || RANGE_OPTIONS[0];
-  const rangeSlug = rangeObj.shortLabel.replace(/\s+/g, '-');
-  const isoDate = new Date().toISOString().slice(0, 10);
-  const fileName = `PAVORA_Laporan_Suhu_${rangeSlug}_${isoDate}.xlsx`;
-
+  const fileName = generateExportFileName(scopeMode, 'xlsx');
   const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
   const blob = new Blob([wbout], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -458,177 +814,164 @@ export function exportSensorDataXlsx(options: ExportReportOptions): void {
 
 /**
  * 3. UNDUH DOKUMEN LAPORAN LENGKAP FORMAT MICROSOFT WORD (.DOC)
- * Menyertakan header resmi, metadata IoT, ringkasan statistik,
- * visual grafik kurva suhu tersemat (embedded image), dan tabel log lengkap.
  */
 export function exportSensorReportDoc(options: ExportReportOptions): void {
-  const { history, thresholds, rangePreset } = options;
-  const dataPoints = filterReadingsByRange(history, rangePreset);
-  if (dataPoints.length === 0) return;
+  const { history, thresholds, scopeMode = 'session_60', rangePreset = 'all' } = options;
+  const processed = processReadingsForReport(history, thresholds, scopeMode, rangePreset);
+  const { rows, overallAvg, overallMin, overallMax, totalSamples } = processed;
+  if (rows.length === 0) return;
 
-  const tempValues = dataPoints.map((d) => d.temperatureC);
-  const minTemp = Math.min(...tempValues);
-  const maxTemp = Math.max(...tempValues);
-  const avgTemp = tempValues.reduce((a, b) => a + b, 0) / tempValues.length;
-
-  const rangeObj =
-    RANGE_OPTIONS.find((r) => r.id === rangePreset) || RANGE_OPTIONS[0];
-  const dateStr = new Date().toLocaleDateString('id-ID', {
-    weekday: 'long',
-    day: '2-digit',
-    month: 'long',
-    year: 'numeric'
-  });
-  const timeStr = new Date().toLocaleTimeString('id-ID', {
-    hour: '2-digit',
-    minute: '2-digit'
-  });
-
-  // Render chart ke canvas lalu ambil data URL image base64 untuk disematkan di Word
-  let chartImageHtml = '';
   const canvas = renderSensorChartToCanvas(options);
+  let chartImageHtml = '';
   if (canvas) {
     const dataUrl = canvas.toDataURL('image/png');
     chartImageHtml = `
       <div style="margin: 20px 0; text-align: center;">
-        <h3 style="font-size: 14px; color: #0f172a; margin-bottom: 8px;">Visualisasi Kurva Fluktuasi Suhu Objek</h3>
-        <img src="${dataUrl}" style="width: 100%; max-width: 650px; height: auto; border: 1px solid #cbd5e1; border-radius: 6px;" alt="Grafik Suhu PAVORA" />
-        <p style="font-size: 10px; color: #64748b; margin-top: 4px; font-style: italic;">*Grafik dirender secara otomatis berdasarkan titik sampel sensor inframerah.</p>
+        <h3 style="font-size: 13px; color: #0f172a; margin-bottom: 8px; text-align: left;">
+          Visualisasi Grafik Tren Suhu Inframerah
+        </h3>
+        <img src="${dataUrl}" style="width: 100%; max-width: 650px; border: 1px solid #cbd5e1; border-radius: 4px;" alt="Grafik Suhu PAVORA" />
       </div>
     `;
   }
 
-  // Baris-baris tabel log riwayat suhu
+  // Baris Tabel HTML
+  let tableHeaderHtml = '';
   let tableRowsHtml = '';
-  dataPoints.forEach((r, idx) => {
-    let statusText = 'Optimal (Normal)';
-    let statusBg = '#ecfdf5';
-    let statusColor = '#065f46';
 
-    if (r.temperatureC >= thresholds.tempCritical) {
-      statusText = 'KRITIS (Bahaya)';
-      statusBg = '#fef2f2';
-      statusColor = '#991b1b';
-    } else if (r.temperatureC > thresholds.tempMaxOptimal) {
-      statusText = 'Tinggi';
-      statusBg = '#fffbeb';
-      statusColor = '#92400e';
-    } else if (r.temperatureC < thresholds.tempMinOptimal) {
-      statusText = 'Rendah';
-      statusBg = '#f8fafc';
-      statusColor = '#475569';
-    }
-
-    tableRowsHtml += `
-      <tr style="border-bottom: 1px solid #e2e8f0; ${idx % 2 === 1 ? 'background-color: #f8fafc;' : ''}">
-        <td style="padding: 8px; text-align: center; font-size: 11px;">${idx + 1}</td>
-        <td style="padding: 8px; font-size: 11px; font-family: monospace;">${r.timestamp} WIB</td>
-        <td style="padding: 8px; text-align: center; font-size: 11px; font-weight: bold; font-family: monospace;">${r.temperatureC.toFixed(2)} °C</td>
-        <td style="padding: 8px; text-align: center; font-size: 11px;">
-          <span style="display: inline-block; padding: 2px 8px; border-radius: 4px; background-color: ${statusBg}; color: ${statusColor}; font-weight: 600; font-size: 10px;">
-            ${statusText}
-          </span>
-        </td>
-        <td style="padding: 8px; text-align: center; font-size: 11px; color: #64748b;">${thresholds.tempMinOptimal} – ${thresholds.tempMaxOptimal} °C</td>
+  if (scopeMode === 'today_hourly') {
+    tableHeaderHtml = `
+      <tr>
+        <th style="width: 6%; text-align: center;">No</th>
+        <th style="width: 14%;">Hari</th>
+        <th style="width: 15%;">Tanggal</th>
+        <th style="width: 25%;">Rentang Jam (WIB)</th>
+        <th style="width: 14%; text-align: center;">Rata-rata (°C)</th>
+        <th style="width: 13%; text-align: center;">Min - Max (°C)</th>
+        <th style="width: 13%; text-align: center;">Status</th>
       </tr>
     `;
-  });
+    tableRowsHtml = rows
+      .map(
+        (r, i) => `
+        <tr style="background-color: ${i % 2 === 0 ? '#ffffff' : '#f8fafc'};">
+          <td style="text-align: center; padding: 6px; border: 1px solid #e2e8f0;">${r.index}</td>
+          <td style="padding: 6px; border: 1px solid #e2e8f0;"><strong>${r.dayName}</strong></td>
+          <td style="padding: 6px; border: 1px solid #e2e8f0;">${r.dateStr}</td>
+          <td style="padding: 6px; border: 1px solid #e2e8f0; font-family: monospace;">${r.timeRange}</td>
+          <td style="text-align: center; padding: 6px; border: 1px solid #e2e8f0; font-weight: bold; color: #ea580c;">${r.temp.toFixed(2)}</td>
+          <td style="text-align: center; padding: 6px; border: 1px solid #e2e8f0; font-size: 10.5px;">${r.minTemp.toFixed(1)} – ${r.maxTemp.toFixed(1)}</td>
+          <td style="text-align: center; padding: 6px; border: 1px solid #e2e8f0; font-weight: bold; color: ${
+            r.status === 'Optimal' ? '#10b981' : r.status === 'Kritis' ? '#e11d48' : '#d97706'
+          };">${r.status}</td>
+        </tr>
+      `
+      )
+      .join('');
+  } else if (scopeMode === 'all_daily') {
+    tableHeaderHtml = `
+      <tr>
+        <th style="width: 6%; text-align: center;">No</th>
+        <th style="width: 16%;">Hari</th>
+        <th style="width: 18%;">Tanggal</th>
+        <th style="width: 18%; text-align: center;">Suhu Rerata (°C)</th>
+        <th style="width: 16%; text-align: center;">Min (°C)</th>
+        <th style="width: 16%; text-align: center;">Max (°C)</th>
+        <th style="width: 10%; text-align: center;">Status</th>
+      </tr>
+    `;
+    tableRowsHtml = rows
+      .map(
+        (r, i) => `
+        <tr style="background-color: ${i % 2 === 0 ? '#ffffff' : '#f8fafc'};">
+          <td style="text-align: center; padding: 6px; border: 1px solid #e2e8f0;">${r.index}</td>
+          <td style="padding: 6px; border: 1px solid #e2e8f0;"><strong>${r.dayName}</strong></td>
+          <td style="padding: 6px; border: 1px solid #e2e8f0;">${r.dateStr}</td>
+          <td style="text-align: center; padding: 6px; border: 1px solid #e2e8f0; font-weight: bold; color: #ea580c;">${r.temp.toFixed(2)}</td>
+          <td style="text-align: center; padding: 6px; border: 1px solid #e2e8f0;">${r.minTemp.toFixed(2)}</td>
+          <td style="text-align: center; padding: 6px; border: 1px solid #e2e8f0;">${r.maxTemp.toFixed(2)}</td>
+          <td style="text-align: center; padding: 6px; border: 1px solid #e2e8f0; font-weight: bold; color: ${
+            r.status === 'Optimal' ? '#10b981' : r.status === 'Kritis' ? '#e11d48' : '#d97706'
+          };">${r.status}</td>
+        </tr>
+      `
+      )
+      .join('');
+  } else {
+    tableHeaderHtml = `
+      <tr>
+        <th style="width: 6%; text-align: center;">No</th>
+        <th style="width: 16%;">Hari</th>
+        <th style="width: 18%;">Tanggal</th>
+        <th style="width: 22%;">Waktu (WIB)</th>
+        <th style="width: 20%; text-align: center;">Suhu (°C)</th>
+        <th style="width: 18%; text-align: center;">Status</th>
+      </tr>
+    `;
+    tableRowsHtml = rows
+      .map(
+        (r, i) => `
+        <tr style="background-color: ${i % 2 === 0 ? '#ffffff' : '#f8fafc'};">
+          <td style="text-align: center; padding: 6px; border: 1px solid #e2e8f0;">${r.index}</td>
+          <td style="padding: 6px; border: 1px solid #e2e8f0;"><strong>${r.dayName}</strong></td>
+          <td style="padding: 6px; border: 1px solid #e2e8f0;">${r.dateStr}</td>
+          <td style="padding: 6px; border: 1px solid #e2e8f0; font-family: monospace;">${r.timeRange}</td>
+          <td style="text-align: center; padding: 6px; border: 1px solid #e2e8f0; font-weight: bold; color: #ea580c;">${r.temp.toFixed(2)}</td>
+          <td style="text-align: center; padding: 6px; border: 1px solid #e2e8f0; font-weight: bold; color: ${
+            r.status === 'Optimal' ? '#10b981' : r.status === 'Kritis' ? '#e11d48' : '#d97706'
+          };">${r.status}</td>
+        </tr>
+      `
+      )
+      .join('');
+  }
 
   const docHtml = `
     <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
     <head>
-      <meta charset='utf-8'>
-      <title>Laporan Monitoring Suhu PAVORA</title>
-      <!--[if gte mso 9]>
-      <xml>
-        <w:WordDocument>
-          <w:View>Print</w:View>
-          <w:Zoom>100</w:Zoom>
-          <w:DoNotOptimizeForBrowser/>
-        </w:WordDocument>
-      </xml>
-      <![endif]-->
+      <meta charset="utf-8">
+      <title>PAVORA — Laporan Monitoring Suhu</title>
       <style>
-        @page {
-          size: A4 portrait;
-          margin: 2cm 2cm 2cm 2cm;
-          mso-page-orientation: portrait;
-        }
-        body {
-          font-family: 'Calibri', 'Segoe UI', Arial, sans-serif;
-          color: #0f172a;
-          line-height: 1.5;
-          margin: 0;
-          padding: 0;
-        }
-        h1 {
-          color: #b45309;
-          font-size: 20px;
-          margin-bottom: 2px;
-          text-transform: uppercase;
-          letter-spacing: 0.5px;
-        }
-        h2 {
-          color: #334155;
-          font-size: 14px;
-          margin-top: 0;
-          font-weight: normal;
-        }
-        table {
-          width: 100%;
-          border-collapse: collapse;
-          margin: 12px 0;
-        }
-        th {
-          background-color: #f1f5f9;
-          color: #334155;
-          font-weight: bold;
-          padding: 8px;
-          border-bottom: 2px solid #cbd5e1;
-          font-size: 11px;
-          text-align: left;
-        }
-        .stat-card {
-          background-color: #f8fafc;
-          border: 1px solid #e2e8f0;
-          border-radius: 6px;
-          padding: 12px;
-          margin: 14px 0;
-        }
+        @page { size: A4 portrait; margin: 2cm; }
+        body { font-family: 'Calibri', 'Segoe UI', Arial, sans-serif; color: #0f172a; line-height: 1.5; margin: 0; padding: 0; }
+        h1 { color: #b45309; font-size: 20px; margin-bottom: 2px; text-transform: uppercase; letter-spacing: 0.5px; }
+        h2 { color: #334155; font-size: 13px; margin-top: 0; font-weight: normal; }
+        table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 11px; }
+        th { background-color: #f1f5f9; color: #334155; font-weight: bold; padding: 8px 6px; border: 1px solid #cbd5e1; text-align: left; }
+        .stat-card { background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; margin: 14px 0; }
       </style>
     </head>
     <body>
       <!-- Header Dokumen -->
-      <table style="width: 100%; border-bottom: 2px solid #ea580c; padding-bottom: 10px; margin-bottom: 16px;">
+      <table style="width: 100%; border-bottom: 2px solid #ea580c; padding-bottom: 8px; margin-bottom: 14px; border: none;">
         <tr>
-          <td style="vertical-align: middle;">
+          <td style="vertical-align: middle; border: none;">
             <h1>PAVORA — LAPORAN RESMI MONITORING SUHU</h1>
             <h2>Sistem Pengukuran Temperatur Inframerah Non-Kontak Berbasis IoT & Cloud</h2>
           </td>
-          <td style="text-align: right; vertical-align: middle; font-size: 11px; color: #64748b;">
+          <td style="text-align: right; vertical-align: middle; font-size: 11px; color: #64748b; border: none;">
             <strong>Waktu Ekspor:</strong><br />
-            ${dateStr}<br />
-            Pukul ${timeStr} WIB
+            ${processed.dateSummary}
           </td>
         </tr>
       </table>
 
-      <!-- Informasi Sistem & Sensor -->
-      <table style="width: 100%; margin-bottom: 16px; font-size: 11px;">
+      <!-- Informasi Sistem & Parameter -->
+      <table style="width: 100%; margin-bottom: 14px; font-size: 11px;">
         <tr>
-          <td style="width: 50%; padding: 6px; background-color: #f8fafc; border: 1px solid #e2e8f0; vertical-align: top;">
+          <td style="width: 50%; padding: 8px; background-color: #f8fafc; border: 1px solid #e2e8f0; vertical-align: top;">
             <strong>INFORMASI PERANGKAT:</strong><br />
             • Mikrokontroler: ESP32 Dev Module<br />
-            • Modul Sensor: GY-906 (Melexis MLX90614ESF)<br />
-            • Antarmuka: I2C (Clock: GPIO 22, Data: GPIO 21)<br />
-            • Komunikasi Cloud: Google Firebase Firestore (pvngblock)
+            • Modul Sensor: GY-906 (MLX90614ESF Inframerah)<br />
+            • Antarmuka: I2C (SCL: GPIO 22, SDA: GPIO 21)<br />
+            • Cloud Sinkronisasi: Google Cloud Firestore
           </td>
-          <td style="width: 50%; padding: 6px; background-color: #f8fafc; border: 1px solid #e2e8f0; vertical-align: top;">
+          <td style="width: 50%; padding: 8px; background-color: #f8fafc; border: 1px solid #e2e8f0; vertical-align: top;">
             <strong>PARAMETER PENGUKURAN:</strong><br />
-            • Rentang Analisis: ${rangeObj.label}<br />
-            • Total Data Sampel: ${dataPoints.length} Titik Pengukuran<br />
-            • Waktu Awal: ${dataPoints[0]?.timestamp || '-'} WIB<br />
-            • Waktu Akhir: ${dataPoints[dataPoints.length - 1]?.timestamp || '-'} WIB
+            • Jangkauan Data: <strong>${processed.scopeLabel}</strong><br />
+            • Total Data Sampel: ${totalSamples} Titik Rekaman Sensor<br />
+            • Baris Rekapitulasi: ${rows.length} Baris Teranalisis<br />
+            • Periode: ${processed.startTimeLabel} s/d ${processed.endTimeLabel}
           </td>
         </tr>
       </table>
@@ -638,16 +981,16 @@ export function exportSensorReportDoc(options: ExportReportOptions): void {
         <h3 style="font-size: 13px; color: #b45309; margin: 0 0 8px 0; text-transform: uppercase;">
           Ringkasan Statistik Suhu (°C)
         </h3>
-        <table style="width: 100%; font-size: 11px; margin: 0;">
+        <table style="width: 100%; font-size: 11px; margin: 0; border: none;">
           <tr>
-            <td style="width: 25%; padding: 4px;"><strong>Rata-rata:</strong> ${avgTemp.toFixed(2)} °C</td>
-            <td style="width: 25%; padding: 4px;"><strong>Minimum:</strong> ${minTemp.toFixed(2)} °C</td>
-            <td style="width: 25%; padding: 4px;"><strong>Maksimum:</strong> ${maxTemp.toFixed(2)} °C</td>
-            <td style="width: 25%; padding: 4px;"><strong>Optimal:</strong> ${thresholds.tempMinOptimal} – ${thresholds.tempMaxOptimal} °C</td>
+            <td style="width: 25%; padding: 4px; border: none;"><strong>Rata-rata:</strong> ${overallAvg.toFixed(2)} °C</td>
+            <td style="width: 25%; padding: 4px; border: none;"><strong>Terendah (Min):</strong> ${overallMin.toFixed(2)} °C</td>
+            <td style="width: 25%; padding: 4px; border: none;"><strong>Tertinggi (Max):</strong> ${overallMax.toFixed(2)} °C</td>
+            <td style="width: 25%; padding: 4px; border: none;"><strong>Rentang Normal:</strong> ${thresholds.tempMinOptimal} – ${thresholds.tempMaxOptimal} °C</td>
           </tr>
           <tr>
-            <td colspan="4" style="padding: 4px; color: #64748b; font-size: 10.5px;">
-              *Ambang Batas Kritis Darurat Pemicu Sirine Alarm: ≥ ${thresholds.tempCritical} °C
+            <td colspan="4" style="padding: 4px; color: #e11d48; font-size: 10.5px; border: none;">
+              *Ambang Batas Kritis Pemicu Sirine Alarm: ≥ ${thresholds.tempCritical} °C
             </td>
           </tr>
         </table>
@@ -657,18 +1000,12 @@ export function exportSensorReportDoc(options: ExportReportOptions): void {
       ${chartImageHtml}
 
       <!-- Tabel Data Log Rinci -->
-      <h3 style="font-size: 13px; color: #0f172a; margin: 24px 0 6px 0;">
+      <h3 style="font-size: 13px; color: #0f172a; margin: 20px 0 6px 0;">
         Tabel Riwayat Data Log Pengukuran Suhu
       </h3>
       <table>
         <thead>
-          <tr>
-            <th style="width: 8%; text-align: center;">No</th>
-            <th style="width: 26%;">Waktu (WIB)</th>
-            <th style="width: 22%; text-align: center;">Suhu Objek (°C)</th>
-            <th style="width: 24%; text-align: center;">Status Kondisi</th>
-            <th style="width: 20%; text-align: center;">Ambang Batas</th>
-          </tr>
+          ${tableHeaderHtml}
         </thead>
         <tbody>
           ${tableRowsHtml}
@@ -676,7 +1013,7 @@ export function exportSensorReportDoc(options: ExportReportOptions): void {
       </table>
 
       <!-- Footer & Validasi -->
-      <div style="margin-top: 30px; padding-top: 12px; border-top: 1px solid #cbd5e1; font-size: 10px; color: #94a3b8; text-align: center;">
+      <div style="margin-top: 26px; padding-top: 10px; border-top: 1px solid #cbd5e1; font-size: 10px; color: #94a3b8; text-align: center;">
         Dokumen ini dibuat otomatis oleh Sistem Monitoring Suhu IoT PAVORA.<br />
         Hak Cipta © ${new Date().getFullYear()} PAVORA — Rekayasa Instrumentasi & IoT.
       </div>
@@ -685,10 +1022,7 @@ export function exportSensorReportDoc(options: ExportReportOptions): void {
   `;
 
   const blob = new Blob(['\ufeff', docHtml], { type: 'application/msword;charset=utf-8' });
-  const rangeSlug = rangeObj.shortLabel.replace(/\s+/g, '-');
-  const isoDate = new Date().toISOString().slice(0, 10);
-  const fileName = `PAVORA_Laporan_Suhu_${rangeSlug}_${isoDate}.doc`;
-
+  const fileName = generateExportFileName(scopeMode, 'doc');
   triggerBlobDownload(blob, fileName);
 }
 
@@ -696,45 +1030,66 @@ export function exportSensorReportDoc(options: ExportReportOptions): void {
  * 4. UNDUH DATA RIWAYAT FORMAT CSV (.CSV)
  */
 export function exportSensorDataCsv(options: ExportReportOptions): void {
-  const { history, thresholds, rangePreset } = options;
-  const dataPoints = filterReadingsByRange(history, rangePreset);
-  if (dataPoints.length === 0) return;
+  const { history, thresholds, scopeMode = 'session_60', rangePreset = 'all' } = options;
+  const processed = processReadingsForReport(history, thresholds, scopeMode, rangePreset);
+  const { rows } = processed;
+  if (rows.length === 0) return;
 
-  const header = ['No', 'Waktu_WIB', 'Suhu_Celcius', 'Status', 'Ambang_Min_C', 'Ambang_Maks_C', 'Batas_Kritis_C', 'Model_Sensor'];
-  const lines: string[] = [header.join(',')];
+  const lines: string[] = [];
 
-  dataPoints.forEach((r, idx) => {
-    let status = 'Optimal';
-    if (r.temperatureC >= thresholds.tempCritical) {
-      status = 'Kritis';
-    } else if (r.temperatureC > thresholds.tempMaxOptimal) {
-      status = 'Tinggi';
-    } else if (r.temperatureC < thresholds.tempMinOptimal) {
-      status = 'Rendah';
-    }
-
-    const row = [
-      idx + 1,
-      `"${r.timestamp}"`,
-      r.temperatureC.toFixed(2),
-      `"${status}"`,
-      thresholds.tempMinOptimal,
-      thresholds.tempMaxOptimal,
-      thresholds.tempCritical,
-      `"GY-906 (MLX90614)"`
-    ];
-    lines.push(row.join(','));
-  });
+  if (scopeMode === 'today_hourly') {
+    lines.push(['No', 'Hari', 'Tanggal', 'Rentang_Waktu_WIB', 'Suhu_Rata_Rata_C', 'Suhu_Min_C', 'Suhu_Maks_C', 'Status_Kondisi', 'Jumlah_Sampel', 'Model_Sensor'].join(','));
+    rows.forEach((r) => {
+      lines.push([
+        r.index,
+        `"${r.dayName}"`,
+        `"${r.dateStr}"`,
+        `"${r.timeRange}"`,
+        r.temp.toFixed(2),
+        r.minTemp.toFixed(2),
+        r.maxTemp.toFixed(2),
+        `"${r.status}"`,
+        r.sampleCount,
+        `"GY-906 (MLX90614)"`
+      ].join(','));
+    });
+  } else if (scopeMode === 'all_daily') {
+    lines.push(['No', 'Hari', 'Tanggal', 'Periode', 'Suhu_Rata_Rata_C', 'Suhu_Min_C', 'Suhu_Maks_C', 'Status_Kondisi', 'Total_Sampel', 'Model_Sensor'].join(','));
+    rows.forEach((r) => {
+      lines.push([
+        r.index,
+        `"${r.dayName}"`,
+        `"${r.dateStr}"`,
+        `"${r.timeRange}"`,
+        r.temp.toFixed(2),
+        r.minTemp.toFixed(2),
+        r.maxTemp.toFixed(2),
+        `"${r.status}"`,
+        r.sampleCount,
+        `"GY-906 (MLX90614)"`
+      ].join(','));
+    });
+  } else {
+    lines.push(['No', 'Hari', 'Tanggal', 'Waktu_WIB', 'Suhu_Celcius', 'Status_Kondisi', 'Ambang_Min_C', 'Ambang_Maks_C', 'Batas_Kritis_C', 'Model_Sensor'].join(','));
+    rows.forEach((r) => {
+      lines.push([
+        r.index,
+        `"${r.dayName}"`,
+        `"${r.dateStr}"`,
+        `"${r.timeRange}"`,
+        r.temp.toFixed(2),
+        `"${r.status}"`,
+        thresholds.tempMinOptimal,
+        thresholds.tempMaxOptimal,
+        thresholds.tempCritical,
+        `"GY-906 (MLX90614)"`
+      ].join(','));
+    });
+  }
 
   const csvContent = '\uFEFF' + lines.join('\r\n');
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-
-  const rangeObj =
-    RANGE_OPTIONS.find((r) => r.id === rangePreset) || RANGE_OPTIONS[0];
-  const rangeSlug = rangeObj.shortLabel.replace(/\s+/g, '-');
-  const isoDate = new Date().toISOString().slice(0, 10);
-  const fileName = `PAVORA_Data_Suhu_${rangeSlug}_${isoDate}.csv`;
-
+  const fileName = generateExportFileName(scopeMode, 'csv');
   triggerBlobDownload(blob, fileName);
 }
 
@@ -742,45 +1097,32 @@ export function exportSensorDataCsv(options: ExportReportOptions): void {
  * 5. UNDUH DATA TERSTRUKTUR FORMAT JSON (.JSON)
  */
 export function exportSensorDataJson(options: ExportReportOptions): void {
-  const { history, thresholds, rangePreset } = options;
-  const dataPoints = filterReadingsByRange(history, rangePreset);
-  if (dataPoints.length === 0) return;
-
-  const tempValues = dataPoints.map((d) => d.temperatureC);
-  const minTemp = Math.min(...tempValues);
-  const maxTemp = Math.max(...tempValues);
-  const avgTemp = tempValues.reduce((a, b) => a + b, 0) / tempValues.length;
+  const { history, thresholds, scopeMode = 'session_60', rangePreset = 'all' } = options;
+  const processed = processReadingsForReport(history, thresholds, scopeMode, rangePreset);
+  const { rows, overallAvg, overallMin, overallMax, totalSamples } = processed;
+  if (rows.length === 0) return;
 
   const payload = {
     project: 'PAVORA',
     description: 'Laporan Telemetri Suhu Inframerah Realtime',
     sensor_model: 'GY-906 (MLX90614ESF)',
+    scope_mode: scopeMode,
+    scope_label: processed.scopeLabel,
     exported_at: new Date().toISOString(),
+    date_summary: processed.dateSummary,
     thresholds_config: thresholds,
     statistics: {
-      total_data_points: dataPoints.length,
-      average_temp_c: Number(avgTemp.toFixed(2)),
-      min_temp_c: Number(minTemp.toFixed(2)),
-      max_temp_c: Number(maxTemp.toFixed(2))
+      total_rows: rows.length,
+      total_samples: totalSamples,
+      average_temp_c: overallAvg,
+      min_temp_c: overallMin,
+      max_temp_c: overallMax
     },
-    readings: dataPoints.map((r, idx) => ({
-      index: idx + 1,
-      id: r.id,
-      timestamp_wib: r.timestamp,
-      epoch_ms: r.epochMs,
-      temperature_c: r.temperatureC,
-      sensor: 'GY-906 (MLX90614)'
-    }))
+    data_records: rows
   };
 
   const jsonStr = JSON.stringify(payload, null, 2);
   const blob = new Blob([jsonStr], { type: 'application/json;charset=utf-8;' });
-
-  const rangeObj =
-    RANGE_OPTIONS.find((r) => r.id === rangePreset) || RANGE_OPTIONS[0];
-  const rangeSlug = rangeObj.shortLabel.replace(/\s+/g, '-');
-  const isoDate = new Date().toISOString().slice(0, 10);
-  const fileName = `PAVORA_Data_Suhu_${rangeSlug}_${isoDate}.json`;
-
+  const fileName = generateExportFileName(scopeMode, 'json');
   triggerBlobDownload(blob, fileName);
 }
