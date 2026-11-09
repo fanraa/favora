@@ -341,7 +341,7 @@ export function subscribeDeviceSettings(
  */
 export async function updateDeviceInterval(
   seconds: 2 | 5 | 10,
-  userEmail: string
+  userEmail?: string | null
 ): Promise<void> {
   try {
     const docRef = doc(db, 'device_settings', 'esp32_config');
@@ -351,7 +351,7 @@ export async function updateDeviceInterval(
         send_interval_sec: seconds,
         interval_ms: seconds * 1000,
         updated_at: new Date().toISOString(),
-        updated_by: userEmail
+        updated_by: userEmail || 'user'
       },
       { merge: true }
     );
@@ -373,7 +373,7 @@ export async function updateDeviceWifiAndAp(
     ap_pass: string;
     send_interval_sec?: 2 | 5 | 10;
   },
-  userEmail: string
+  userEmail?: string | null
 ): Promise<void> {
   try {
     const docRef = doc(db, 'device_settings', 'esp32_config');
@@ -387,7 +387,7 @@ export async function updateDeviceWifiAndAp(
       last_synced_from: 'web_portal',
       credentials_updated_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-      updated_by: userEmail
+      updated_by: userEmail || 'user'
     };
     if (credentials.send_interval_sec) {
       payload.send_interval_sec = credentials.send_interval_sec;
@@ -446,7 +446,7 @@ export async function updateThresholdSettings(
     pressureMaxSafe: number;
     pressureCritical: number;
   },
-  userEmail: string
+  userEmail?: string | null
 ): Promise<void> {
   try {
     const docRef = doc(db, 'device_settings', 'thresholds');
@@ -455,7 +455,7 @@ export async function updateThresholdSettings(
       {
         ...thresholds,
         updated_at: new Date().toISOString(),
-        updated_by: userEmail
+        updated_by: userEmail || 'user'
       },
       { merge: true }
     );

@@ -386,10 +386,24 @@ export default function App() {
     }
   }, [getAudioContext]);
 
+  const [isTestingAlarmVisual, setIsTestingAlarmVisual] = useState(false);
+  const testVisualTimerRef = useRef<any>(null);
+
   const handleTestAlarmSound = useCallback(() => {
     getAudioContext();
     playCriticalAlertSound();
+    setIsTestingAlarmVisual(true);
+    if (testVisualTimerRef.current) clearTimeout(testVisualTimerRef.current);
+    testVisualTimerRef.current = setTimeout(() => {
+      setIsTestingAlarmVisual(false);
+    }, 2800);
   }, [getAudioContext, playCriticalAlertSound]);
+
+  useEffect(() => {
+    return () => {
+      if (testVisualTimerRef.current) clearTimeout(testVisualTimerRef.current);
+    };
+  }, []);
 
   const handleToggleAlarmSound = useCallback(() => {
     setAlarmSoundEnabled((prev) => {
@@ -653,6 +667,9 @@ export default function App() {
 
   const handleUpdateSettings = (partial: Partial<ConnectionSettings>) => {
     if (partial.activeMethod && partial.activeMethod !== settings.activeMethod) {
+      if (!currentUser || (partial.activeMethod !== 'cloud_hotspot' && partial.activeMethod !== 'simulation')) {
+        return;
+      }
       disconnectHardware();
       if (partial.activeMethod === 'simulation') {
         setIsConnected(true);
@@ -727,7 +744,7 @@ export default function App() {
           pressureMaxSafe: 0,
           pressureCritical: 0
         },
-        currentUser.email
+        currentUser?.email
       );
     } catch (err) {
       console.error('Gagal sinkronisasi batas optimal ke Firestore:', err);
@@ -916,6 +933,24 @@ export default function App() {
       {/* Splash Screen */}
       <SplashScreen />
 
+      {/* Indikator Visual Berkedip Merah Lembut Seirama Beat Suara Alarm Kritis */}
+      {(isCriticalNow || isTestingAlarmVisual) && (
+        <div
+          aria-hidden="true"
+          className={`fixed inset-0 pointer-events-none z-30 ${
+            isCriticalNow ? 'animate-alert-beat' : 'animate-alert-beat-once'
+          }`}
+        >
+          {/* Vignette radial melingkar tepi layar */}
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_42%,rgba(239,68,68,0.18)_100%)]" />
+          {/* Pendaran perimeter lembut di sekeliling layar */}
+          <div className="absolute inset-0 shadow-[inset_0_0_55px_rgba(239,68,68,0.22),inset_0_0_110px_rgba(239,68,68,0.12)]" />
+          {/* Garis aksen merah lembut di tepi atas & bawah */}
+          <div className="absolute top-0 inset-x-0 h-1 bg-gradient-to-r from-transparent via-rose-500/80 to-transparent blur-[1px]" />
+          <div className="absolute bottom-0 inset-x-0 h-1 bg-gradient-to-r from-transparent via-rose-500/80 to-transparent blur-[1px]" />
+        </div>
+      )}
+
       {/* Header: Diturunkan agar area atas lapang/kosong dan background terlihat jelas */}
       <header className="w-full max-w-5xl mx-auto px-4 sm:px-6 pt-20 sm:pt-28 md:pt-36 pb-1.5 flex items-center justify-between relative z-10">
         {/* Pojok Kiri Atas: Hari dan Tanggal Kuning-Orange Jelas */}
@@ -984,14 +1019,15 @@ export default function App() {
             </button>
           )}
 
-          {/* Tombol Sambung Cepat ESP32 */}
-          <button
-            type="button"
-            onClick={() => setQuickConnectOpen(true)}
-            aria-label="Sambungkan ke ESP32"
-            title="Sambungkan ke ESP32"
-            className="p-1 rounded-full hover:bg-amber-500/15 active:scale-95 transition-all duration-300 cursor-pointer flex items-center justify-center group"
-          >
+          {/* Tombol Sambung Cepat ESP32 (Hanya muncul jika sudah login) */}
+          {currentUser && (
+            <button
+              type="button"
+              onClick={() => setQuickConnectOpen(true)}
+              aria-label="Sambungkan ke ESP32"
+              title="Sambungkan ke ESP32"
+              className="p-1 rounded-full hover:bg-amber-500/15 active:scale-95 transition-all duration-300 cursor-pointer flex items-center justify-center group"
+            >
               <img
                 src="https://cdn-icons-png.flaticon.com/128/453/453219.png"
                 alt="Sambungkan"
@@ -1001,6 +1037,7 @@ export default function App() {
                 draggable={false}
               />
             </button>
+          )}
 
           {/* Navigasi Utama: Ikon Dashboard Sensor (Kuning Orange Jelas) */}
           <button
@@ -1146,15 +1183,8 @@ export default function App() {
               </div>
 
               {/* 2. Bluetooth BLE */}
-              <div className="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-sm p-2.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    handleUpdateSettings({ activeMethod: 'bluetooth' });
-                    handleConnectBluetooth();
-                  }}
-                  className="flex-1 flex items-center gap-2.5 text-left cursor-pointer min-w-0"
-                >
+              <div className="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-sm p-2.5 opacity-65">
+                <div className="flex-1 flex items-center gap-2.5 text-left cursor-default select-none min-w-0">
                   <Bluetooth className="w-4 h-4 text-blue-600 shrink-0" />
                   <div className="min-w-0">
                     <p className="text-xs font-medium text-slate-900 truncate">
@@ -1164,20 +1194,13 @@ export default function App() {
                       Tanpa Wi-Fi & tanpa kuota (1–15m)
                     </p>
                   </div>
-                </button>
+                </div>
                 <InfoButton topicId="method_bluetooth" />
               </div>
 
               {/* 3. Wi-Fi Lokal */}
-              <div className="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-sm p-2.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    handleUpdateSettings({ activeMethod: 'wifi_local' });
-                    handleStartPollingUrl('wifi_local');
-                  }}
-                  className="flex-1 flex items-center gap-2.5 text-left cursor-pointer min-w-0"
-                >
+              <div className="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-sm p-2.5 opacity-65">
+                <div className="flex-1 flex items-center gap-2.5 text-left cursor-default select-none min-w-0">
                   <Wifi className="w-4 h-4 text-amber-600 shrink-0" />
                   <div className="min-w-0">
                     <p className="text-xs font-medium text-slate-900 truncate">
@@ -1187,20 +1210,13 @@ export default function App() {
                       Hotspot mandiri ESP32 (192.168.4.1)
                     </p>
                   </div>
-                </button>
+                </div>
                 <InfoButton topicId="method_wifi_local" />
               </div>
 
               {/* 4. USB Serial */}
-              <div className="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-sm p-2.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    handleUpdateSettings({ activeMethod: 'usb_serial' });
-                    handleConnectUsbSerial();
-                  }}
-                  className="flex-1 flex items-center gap-2.5 text-left cursor-pointer min-w-0"
-                >
+              <div className="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-sm p-2.5 opacity-65">
+                <div className="flex-1 flex items-center gap-2.5 text-left cursor-default select-none min-w-0">
                   <Usb className="w-4 h-4 text-indigo-600 shrink-0" />
                   <div className="min-w-0">
                     <p className="text-xs font-medium text-slate-900 truncate">
@@ -1210,7 +1226,7 @@ export default function App() {
                       Colok kabel USB langsung ke laptop
                     </p>
                   </div>
-                </button>
+                </div>
                 <InfoButton topicId="method_usb_serial" />
               </div>
 

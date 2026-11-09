@@ -166,7 +166,7 @@ export const WEATHER_LOCATIONS: LocationPreset[] = [
     name: 'SMAN 1 JATI AGUNG',
     latitude: -5.3176,
     longitude: 105.4097,
-    sublabel: 'Sistem Sensor FAVORA'
+    sublabel: 'Sistem Sensor PAVORA'
   },
   {
     id: 'itera',

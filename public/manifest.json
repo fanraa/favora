@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "FAVORA — Monitoring Suhu Inframerah",
-  "short_name": "FAVORA",
+  "name": "PAVORA — Monitoring Suhu Inframerah",
+  "short_name": "PAVORA",
   "description": "Aplikasi monitoring suhu inframerah non-kontak realtime berbasis IoT ESP32 dan GY-906 (MLX90614).",
   "start_url": "/",
   "scope": "/",

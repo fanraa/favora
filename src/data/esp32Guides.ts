@@ -5,7 +5,7 @@ export const INFO_TOPICS: Record<string, InfoContent> = {
     id: 'temperature_indicator',
     title: 'Sensor Suhu Inframerah (°C)',
     subtitle: 'Pemantauan Suhu Non-Kontak GY-906',
-    summary: 'Menampilkan temperatur objek non-kontak secara realtime dari sensor inframerah GY-906 (MLX90614ESF) pada sistem FAVORA.',
+    summary: 'Menampilkan temperatur objek non-kontak secara realtime dari sensor inframerah GY-906 (MLX90614ESF) pada sistem PAVORA.',
     bullets: [
       'Sensor Termometer Inframerah Non-Kontak GY-906 (IC Melexis MLX90614ESF).',
       'Mengukur suhu objek presisi tanpa perlu menyentuh permukaan target.',
@@ -21,7 +21,7 @@ export const INFO_TOPICS: Record<string, InfoContent> = {
     bullets: [
       'Tidak perlu router Wi-Fi atau paket internet di lokasi alat.',
       'Cukup nyalakan ESP32, buka Chrome di HP/Laptop, lalu klik Hubungkan.',
-      'Sangat praktis untuk pengujian langsung di dekat sensor FAVORA.'
+      'Sangat praktis untuk pengujian langsung di dekat sensor PAVORA.'
     ]
   },
   method_wifi_local: {
@@ -78,6 +78,28 @@ export const INFO_TOPICS: Record<string, InfoContent> = {
       'SCL → Pin GPIO 22 ESP32 (I2C Clock).',
       'SDA → Pin GPIO 21 ESP32 (I2C Data).',
       'Alamat I2C: 0x5A (Otomatis terhubung tanpa solder jumper).'
+    ]
+  },
+  wifi_sync_guide: {
+    id: 'wifi_sync_guide',
+    title: 'Sinkronisasi Wi-Fi ESP32',
+    subtitle: 'Remote Config Tanpa Flash Ulang',
+    summary: 'ESP32 memeriksa pembaruan Wi-Fi dari Firestore setiap 15 detik dan otomatis tersambung ke jaringan baru.',
+    bullets: [
+      'Saat Online: ESP32 membaca kredensial Wi-Fi baru dari Firestore lalu menyimpannya ke memori non-volatile (NVS flash).',
+      'Saat Offline: Sambungkan HP ke Hotspot ESP32 (192.168.4.1) atau unduh sketch .ino yang sudah terisi Wi-Fi baru.',
+      'Mendukung jaringan Wi-Fi 2.4 GHz dan Personal Hotspot smartphone.'
+    ]
+  },
+  thresholds_guide: {
+    id: 'thresholds_guide',
+    title: 'Batas Ambang Suhu (°C)',
+    subtitle: 'Rentang Optimal & Pemicu Alarm',
+    summary: 'Batas suhu inframerah yang disinkronkan ke seluruh pengguna secara realtime via Cloud Firestore.',
+    bullets: [
+      'Suhu Min Optimal: Batas bawah suhu normal (standar 30°C).',
+      'Suhu Maks Optimal: Batas atas suhu normal (standar 40°C).',
+      'Suhu Kritis: Memicu sirine darurat otomatis dan indikator merah jika suhu terukur melampaui batas (standar 45°C).'
     ]
   }
 };

@@ -76,12 +76,12 @@ export const SplashScreen: React.FC<SplashScreenProps> = ({ onComplete }) => {
       aria-hidden="true"
     >
       <div className="relative z-10 flex flex-col items-center justify-center text-center px-6">
-        <div className="w-20 h-20 rounded-3xl bg-gradient-to-tr from-amber-500 to-orange-500 flex items-center justify-center text-white shadow-lg shadow-amber-500/20 mb-4 animate-in zoom-in-90 duration-300">
-          <Thermometer className="w-10 h-10" />
+        <div className="w-20 h-20 rounded-3xl bg-white flex items-center justify-center p-2.5 shadow-lg shadow-amber-500/20 mb-4 border border-slate-100 animate-in zoom-in-90 duration-300">
+          <img src="/logo.png" alt="PAVORA" className="w-full h-full object-contain" />
         </div>
 
         <h1 className="text-2xl font-bold tracking-tight text-slate-900 font-sans">
-          FAVORA
+          PAVORA
         </h1>
         <p className="text-xs font-mono text-slate-500 mt-1">
           Monitoring Suhu Inframerah (GY-906)

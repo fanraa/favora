@@ -46,4 +46,50 @@
   animation-play-state: paused;
 }
 
+@keyframes softAlertBeatPulse {
+  0% {
+    opacity: 0;
+  }
+  2.5% {
+    opacity: 0.95;
+  }
+  5% {
+    opacity: 0.25;
+  }
+  8.2% {
+    opacity: 0.9;
+  }
+  10.7% {
+    opacity: 0.25;
+  }
+  13.9% {
+    opacity: 0.95;
+  }
+  16.4% {
+    opacity: 0.3;
+  }
+  19.6% {
+    opacity: 1;
+  }
+  25.7% {
+    opacity: 0.2;
+  }
+  32% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.animate-alert-beat {
+  animation: softAlertBeatPulse 2.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  will-change: opacity;
+}
+
+.animate-alert-beat-once {
+  animation: softAlertBeatPulse 2.8s cubic-bezier(0.4, 0, 0.2, 1) 1;
+  will-change: opacity;
+}
+
 

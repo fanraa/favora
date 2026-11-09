@@ -1,6 +1,6 @@
 {
-  "name": "Remix Remix bIoTeragas",
-  "description": "Imported from GitHub",
+  "name": "PAVORA - Monitoring Suhu Inframerah ESP32",
+  "description": "Sistem monitoring suhu inframerah non-kontak realtime berbasis IoT ESP32 dan sensor GY-906 (MLX90614) via Cloud Firestore, BLE, dan Wi-Fi.",
   "requestFramePermissions": [
     "bluetooth",
     "serial"

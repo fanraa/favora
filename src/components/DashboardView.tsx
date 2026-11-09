@@ -147,7 +147,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     }
     if (temp >= thresholds.tempCritical) {
       return {
-        icon: <span className="w-2 h-2 rounded-[2.5px] bg-rose-500 shrink-0" />,
+        icon: <span className="w-2 h-2 rounded-[2.5px] bg-rose-500 shrink-0 animate-pulse" />,
         label: 'Kritis',
         tone: 'text-rose-600'
       };
@@ -275,7 +275,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           {/* CARD TUNGGAL GABUNGAN: GLASSMORPHISM PREMIUM & TEKS TETAP TAJAM */}
-          <section className="relative bg-white/65 sm:bg-white/70 backdrop-blur-md border border-white/80 rounded-md p-3.5 sm:p-4 flex flex-col justify-between shadow-xs hover:bg-white/80 hover:border-white transition-all duration-300">
+          <section className={`relative bg-white/65 sm:bg-white/70 backdrop-blur-md rounded-md p-3.5 sm:p-4 flex flex-col justify-between shadow-xs transition-all duration-300 ${
+            showSensorValues && temp >= thresholds.tempCritical
+              ? 'border border-rose-400/80 ring-2 ring-rose-400/25 bg-rose-50/30'
+              : 'border border-white/80 hover:bg-white/80 hover:border-white'
+          }`}>
             {/* Pojok Atas: Icon Asli Flaticon */}
             <div className="flex items-center justify-between">
               <img

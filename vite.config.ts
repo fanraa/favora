@@ -14,9 +14,9 @@ export default defineConfig(() => {
         includeAssets: ['apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'splash-bg.jpg', 'logo.png', 'logo-itera.png', 'logo-fisika-itera.png'],
         manifest: {
           id: '/',
-          name: 'IoT TempSense — Monitoring Sensor Suhu',
-          short_name: 'IoT TempSense',
-          description: 'Aplikasi monitoring indikator suhu realtime berbasis IoT ESP32 secara realtime.',
+          name: 'PAVORA — Monitoring Suhu Inframerah',
+          short_name: 'PAVORA',
+          description: 'Aplikasi monitoring suhu inframerah non-kontak realtime berbasis IoT ESP32.',
           theme_color: '#f8fafc',
           background_color: '#f8fafc',
           display: 'standalone',
@@ -60,6 +60,8 @@ export default defineConfig(() => {
       },
     },
     server: {
+      host: '0.0.0.0',
+      port: 3000,
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',

@@ -108,7 +108,7 @@ export function renderSensorChartToCanvas(options: ExportReportOptions): HTMLCan
 
   ctx.fillStyle = '#0f172a';
   ctx.font = 'bold 24px "Plus Jakarta Sans", sans-serif';
-  ctx.fillText('FAVORA — Grafik Monitoring Suhu Inframerah', 48, 64);
+  ctx.fillText('PAVORA — Grafik Monitoring Suhu Inframerah', 48, 64);
 
   ctx.fillStyle = '#64748b';
   ctx.font = '500 14px "Plus Jakarta Sans", sans-serif';
@@ -311,7 +311,7 @@ export function renderSensorChartToCanvas(options: ExportReportOptions): HTMLCan
   ctx.font = '12px "Plus Jakarta Sans", sans-serif';
   ctx.textAlign = 'center';
   ctx.fillText(
-    'FAVORA — Sistem Pemantauan Suhu Inframerah Realtime',
+    'PAVORA — Sistem Pemantauan Suhu Inframerah Realtime',
     W / 2,
     H - 28
   );
@@ -331,7 +331,7 @@ export function exportSensorChartPng(options: ExportReportOptions): void {
     RANGE_OPTIONS.find((r) => r.id === options.rangePreset) || RANGE_OPTIONS[0];
   const rangeSlug = rangeObj.shortLabel.replace(/\s+/g, '-');
   const isoDate = new Date().toISOString().slice(0, 10);
-  const fileName = `FAVORA_Grafik_Suhu_${rangeSlug}_${isoDate}.png`;
+  const fileName = `PAVORA_Grafik_Suhu_${rangeSlug}_${isoDate}.png`;
 
   const dataUrl = canvas.toDataURL('image/png');
   const link = document.createElement('a');
@@ -359,7 +359,7 @@ export function exportSensorDataXlsx(options: ExportReportOptions): void {
 
   // SHEET 1: Data Riwayat Suhu
   const rows: any[][] = [];
-  rows.push(['FAVORA — LAPORAN DATA MONITORING SUHU INFRAMERAH']);
+  rows.push(['PAVORA — LAPORAN DATA MONITORING SUHU INFRAMERAH']);
   rows.push([`Dibuat pada: ${new Date().toLocaleString('id-ID')} WIB`]);
   rows.push([`Sensor: GY-906 (MLX90614) | Mikrokontroler: ESP32`]);
   rows.push([]); // baris kosong
@@ -416,7 +416,7 @@ export function exportSensorDataXlsx(options: ExportReportOptions): void {
 
   // SHEET 2: Ringkasan & Statistik
   const summaryRows: any[][] = [
-    ['FAVORA — RINGKASAN STATISTIK MONITORING'],
+    ['PAVORA — RINGKASAN STATISTIK MONITORING'],
     [],
     ['Parameter', 'Nilai', 'Satuan', 'Keterangan'],
     ['Total Titik Data Terbaca', dataPoints.length, 'Data', 'Jumlah rekaman sampel sensor'],
@@ -447,7 +447,7 @@ export function exportSensorDataXlsx(options: ExportReportOptions): void {
     RANGE_OPTIONS.find((r) => r.id === rangePreset) || RANGE_OPTIONS[0];
   const rangeSlug = rangeObj.shortLabel.replace(/\s+/g, '-');
   const isoDate = new Date().toISOString().slice(0, 10);
-  const fileName = `FAVORA_Laporan_Suhu_${rangeSlug}_${isoDate}.xlsx`;
+  const fileName = `PAVORA_Laporan_Suhu_${rangeSlug}_${isoDate}.xlsx`;
 
   const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
   const blob = new Blob([wbout], {
@@ -492,7 +492,7 @@ export function exportSensorReportDoc(options: ExportReportOptions): void {
     chartImageHtml = `
       <div style="margin: 20px 0; text-align: center;">
         <h3 style="font-size: 14px; color: #0f172a; margin-bottom: 8px;">Visualisasi Kurva Fluktuasi Suhu Objek</h3>
-        <img src="${dataUrl}" style="width: 100%; max-width: 650px; height: auto; border: 1px solid #cbd5e1; border-radius: 6px;" alt="Grafik Suhu FAVORA" />
+        <img src="${dataUrl}" style="width: 100%; max-width: 650px; height: auto; border: 1px solid #cbd5e1; border-radius: 6px;" alt="Grafik Suhu PAVORA" />
         <p style="font-size: 10px; color: #64748b; margin-top: 4px; font-style: italic;">*Grafik dirender secara otomatis berdasarkan titik sampel sensor inframerah.</p>
       </div>
     `;
@@ -538,7 +538,7 @@ export function exportSensorReportDoc(options: ExportReportOptions): void {
     <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
     <head>
       <meta charset='utf-8'>
-      <title>Laporan Monitoring Suhu FAVORA</title>
+      <title>Laporan Monitoring Suhu PAVORA</title>
       <!--[if gte mso 9]>
       <xml>
         <w:WordDocument>
@@ -602,7 +602,7 @@ export function exportSensorReportDoc(options: ExportReportOptions): void {
       <table style="width: 100%; border-bottom: 2px solid #ea580c; padding-bottom: 10px; margin-bottom: 16px;">
         <tr>
           <td style="vertical-align: middle;">
-            <h1>FAVORA — LAPORAN RESMI MONITORING SUHU</h1>
+            <h1>PAVORA — LAPORAN RESMI MONITORING SUHU</h1>
             <h2>Sistem Pengukuran Temperatur Inframerah Non-Kontak Berbasis IoT & Cloud</h2>
           </td>
           <td style="text-align: right; vertical-align: middle; font-size: 11px; color: #64748b;">
@@ -677,8 +677,8 @@ export function exportSensorReportDoc(options: ExportReportOptions): void {
 
       <!-- Footer & Validasi -->
       <div style="margin-top: 30px; padding-top: 12px; border-top: 1px solid #cbd5e1; font-size: 10px; color: #94a3b8; text-align: center;">
-        Dokumen ini dibuat otomatis oleh Sistem Monitoring Suhu IoT FAVORA.<br />
-        Hak Cipta © ${new Date().getFullYear()} FAVORA — Rekayasa Instrumentasi & IoT.
+        Dokumen ini dibuat otomatis oleh Sistem Monitoring Suhu IoT PAVORA.<br />
+        Hak Cipta © ${new Date().getFullYear()} PAVORA — Rekayasa Instrumentasi & IoT.
       </div>
     </body>
     </html>
@@ -687,7 +687,7 @@ export function exportSensorReportDoc(options: ExportReportOptions): void {
   const blob = new Blob(['\ufeff', docHtml], { type: 'application/msword;charset=utf-8' });
   const rangeSlug = rangeObj.shortLabel.replace(/\s+/g, '-');
   const isoDate = new Date().toISOString().slice(0, 10);
-  const fileName = `FAVORA_Laporan_Suhu_${rangeSlug}_${isoDate}.doc`;
+  const fileName = `PAVORA_Laporan_Suhu_${rangeSlug}_${isoDate}.doc`;
 
   triggerBlobDownload(blob, fileName);
 }
@@ -733,7 +733,7 @@ export function exportSensorDataCsv(options: ExportReportOptions): void {
     RANGE_OPTIONS.find((r) => r.id === rangePreset) || RANGE_OPTIONS[0];
   const rangeSlug = rangeObj.shortLabel.replace(/\s+/g, '-');
   const isoDate = new Date().toISOString().slice(0, 10);
-  const fileName = `FAVORA_Data_Suhu_${rangeSlug}_${isoDate}.csv`;
+  const fileName = `PAVORA_Data_Suhu_${rangeSlug}_${isoDate}.csv`;
 
   triggerBlobDownload(blob, fileName);
 }
@@ -752,7 +752,7 @@ export function exportSensorDataJson(options: ExportReportOptions): void {
   const avgTemp = tempValues.reduce((a, b) => a + b, 0) / tempValues.length;
 
   const payload = {
-    project: 'FAVORA',
+    project: 'PAVORA',
     description: 'Laporan Telemetri Suhu Inframerah Realtime',
     sensor_model: 'GY-906 (MLX90614ESF)',
     exported_at: new Date().toISOString(),
@@ -780,7 +780,7 @@ export function exportSensorDataJson(options: ExportReportOptions): void {
     RANGE_OPTIONS.find((r) => r.id === rangePreset) || RANGE_OPTIONS[0];
   const rangeSlug = rangeObj.shortLabel.replace(/\s+/g, '-');
   const isoDate = new Date().toISOString().slice(0, 10);
-  const fileName = `FAVORA_Data_Suhu_${rangeSlug}_${isoDate}.json`;
+  const fileName = `PAVORA_Data_Suhu_${rangeSlug}_${isoDate}.json`;
 
   triggerBlobDownload(blob, fileName);
 }
