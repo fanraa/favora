@@ -111,6 +111,43 @@ function downsampleReadingsWithPeaks(items: SensorReading[], targetBuckets = 55)
   return result;
 }
 
+const INDO_DAYS = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+const INDO_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+
+function formatReadingDateLabel(item?: SensorReading | null): {
+  fullDate: string;
+  xLabel: string;
+} {
+  if (!item) return { fullDate: '-', xLabel: '-' };
+
+  let d: Date | null = null;
+  if (item.epochMs && item.epochMs > 0) {
+    d = new Date(item.epochMs);
+  } else if (item.timestamp) {
+    const parsed = new Date(item.timestamp);
+    if (!isNaN(parsed.getTime())) d = parsed;
+  }
+
+  if (!d || isNaN(d.getTime())) {
+    return {
+      fullDate: item.timestamp || '-',
+      xLabel: item.timestamp || '-'
+    };
+  }
+
+  const dayName = INDO_DAYS[d.getDay()];
+  const dateNum = String(d.getDate()).padStart(2, '0');
+  const monthName = INDO_MONTHS[d.getMonth()];
+  const hours = String(d.getHours()).padStart(2, '0');
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  const seconds = String(d.getSeconds()).padStart(2, '0');
+
+  return {
+    fullDate: `${dayName}, ${dateNum} ${monthName} • ${hours}:${minutes}:${seconds} WIB`,
+    xLabel: `${dateNum} ${monthName} ${hours}:${minutes}`
+  };
+}
+
 interface SensorHistoryChartProps {
   history: SensorReading[];
   thresholds: ThresholdConfig;
@@ -954,11 +991,13 @@ export const SensorHistoryChart: React.FC<SensorHistoryChartProps> = ({
             />
           )}
 
-          {/* Label Sumbu X (Waktu) */}
+          {/* Label Sumbu X (Waktu / Tanggal) */}
           {dataPoints.length > 0 && (
-            <g className="fill-slate-400 font-mono text-[10px] select-none">
+            <g className="fill-slate-400 font-mono text-[9.5px] select-none">
               <text x={padLeft} y={height - 4} textAnchor="start">
-                {dataPoints[0].timestamp}
+                {rangePreset === '7_days' || rangePreset === 'all'
+                  ? formatReadingDateLabel(dataPoints[0]).xLabel
+                  : dataPoints[0].timestamp}
               </text>
               {dataPoints.length > 2 && (
                 <text
@@ -966,12 +1005,16 @@ export const SensorHistoryChart: React.FC<SensorHistoryChartProps> = ({
                   y={height - 4}
                   textAnchor="middle"
                 >
-                  {dataPoints[Math.floor(dataPoints.length / 2)].timestamp}
+                  {rangePreset === '7_days' || rangePreset === 'all'
+                    ? formatReadingDateLabel(dataPoints[Math.floor(dataPoints.length / 2)]).xLabel
+                    : dataPoints[Math.floor(dataPoints.length / 2)].timestamp}
                 </text>
               )}
               {dataPoints.length > 1 && (
                 <text x={padLeft + plotW} y={height - 4} textAnchor="end">
-                  {dataPoints[dataPoints.length - 1].timestamp}
+                  {rangePreset === '7_days' || rangePreset === 'all'
+                    ? formatReadingDateLabel(dataPoints[dataPoints.length - 1]).xLabel
+                    : dataPoints[dataPoints.length - 1].timestamp}
                 </text>
               )}
             </g>
@@ -979,10 +1022,12 @@ export const SensorHistoryChart: React.FC<SensorHistoryChartProps> = ({
         </svg>
       </div>
 
-      {/* Footer Info Bawah: Bersih tanpa box kuning dan tanpa buletan kuning samping jam */}
-      <div className="flex items-center justify-between gap-2 pt-1.5 border-t border-slate-200/50 text-xs font-mono tabular-nums text-slate-500">
+      {/* Footer Info Bawah: Sederhana dengan Hari, Tanggal, Jam, dan Suhu */}
+      <div className="flex flex-wrap items-center justify-between gap-y-1 gap-x-2 pt-1.5 border-t border-slate-200/50 text-xs font-mono tabular-nums text-slate-500">
         <div className="flex items-center gap-2 min-w-0">
-          <span className="text-slate-400 text-[11px]">{inspectedItem.timestamp}</span>
+          <span className="text-slate-500 text-[11px] font-sans">
+            {formatReadingDateLabel(inspectedItem).fullDate}
+          </span>
           <span className="text-slate-300 select-none">|</span>
           <span className="font-semibold text-slate-800 text-[12px]">
             {inspectedTemp.toFixed(1)}°C
